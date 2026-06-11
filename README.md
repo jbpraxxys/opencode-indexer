@@ -20,17 +20,17 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
          │                                        ▲
          │  tool calls                            │  vectors
          ▼                                        │
-┌─────────────────────┐                  ┌─────────────────────┐
-│   Server Plugin      │                  │   Vector Store       │
-│   (src/index.ts)     │                  │   Qdrant / LanceDB   │
-│                      │                  │                      │
-│  ▪ codebase_index    │───embed────▶    │  idx_<sha256>       │
-│  ▪ codebase_search   │                  │  ▪ filePath          │
-│  ▪ codebase_status   │                  │  ▪ content           │
-│  ▪ file watcher      │                  │  ▪ startLine/endLine │
-│  ▪ system prompt     │                  │  ▪ language          │
-└─────────────────────┘                  │  ▪ hash + fileHash   │
-         │                                └─────────────────────┘
+┌──────────────────────────────┐      ┌──────────────────────────────┐
+│   Server Plugin               │      │   Vector Store                │
+│   (src/index.ts)              │      │   Qdrant / LanceDB            │
+│                               │      │                               │
+│  ▪ codebase_index             │───embed──▶  │  idx_<sha256>       │
+│  ▪ codebase_search            │      │  ▪ filePath                   │
+│  ▪ codebase_status            │      │  ▪ content                    │
+│  ▪ file watcher (chokidar)    │      │  ▪ startLine/endLine          │
+│  ▪ branch polling (3s)        │      │  ▪ language                   │
+│  ▪ system prompt              │      │  ▪ hash + fileHash            │
+└──────────────────────────────┘      └──────────────────────────────┘
          │  parse + embed
          ▼
 ┌──────────────────────────────────────────────────────────────────┐
@@ -55,11 +55,12 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 │                       Your Project                                │
 │                                                                   │
 │   src/auth.ts    src/utils.ts    src/payments.ts   ...            │
-│   .codebase-index   .gitignore   .opencodeignore                 │
+│   .codebase-index   .codebase-index-branch   .gitignore           │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 **Flow:**
+
 1. Agent calls `codebase_search("auth flow")`
 2. Plugin auto-indexes if no index exists (first use)
 3. Tree-sitter parses files into semantic blocks (functions, classes)
@@ -68,6 +69,7 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 6. Qdrant stores vectors with metadata
 7. Query embedding → cosine similarity search → formatted results
 8. File watcher detects edits → re-indexes only the changed file
+9. **Branch polling detects `git checkout` → full re-index with hash caching (if `branchAware` enabled)**
 
 ---
 
@@ -77,6 +79,7 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 | -------------------------------- | --------------------------------------------------------------------------------------- |
 | **Tree-sitter AST Parsing**      | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP |
 | **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                      |
+| **Branch-Aware Indexing**        | Polls `.git/HEAD` every 3s — auto re-indexes on branch switch (opt-in)                  |
 | **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)  |
 | **Progress File**                | Real-time `.codebase-index-progress.json` during indexing (phase, percentage, counts)   |
 | **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                            |
@@ -127,7 +130,8 @@ Add to `~/.config/opencode/opencode.json`:
         "openaiApiKey": "sk-...",
         "model": "text-embedding-3-small",
         "vectorStore": "qdrant",
-        "qdrantUrl": "http://localhost:6333"
+        "qdrantUrl": "http://localhost:6333",
+        "branchAware": true
     }]
 ]
 ```
@@ -157,15 +161,24 @@ Three tools available to the AI agent:
 
 The agent follows a **Search Priority Rule**: always tries `codebase_search` first, falls back to grep/glob only if no results.
 
-### Auto-Indexing (File Watcher)
+### Auto-Indexing (File Watcher + Branch Detection)
 
-When OpenCode runs in an opted-in project, the file watcher keeps the index fresh:
+When OpenCode runs in an opted-in project, two mechanisms keep the index fresh:
+
+**File Watcher (chokidar):**
 
 | Action            | Result                                     |
 | ----------------- | ------------------------------------------ |
 | Save/edit a file  | Re-indexes only that file (600ms debounce) |
 | Create a new file | Indexes immediately                        |
 | Delete a file     | Removes its blocks from the store          |
+
+**Branch Detection (opt-in via `branchAware`):**
+
+| Action          | Result                                                  |
+| --------------- | ------------------------------------------------------- |
+| Switch branches | Full re-index within 3s (hash cache — unchanged = free) |
+| Detached HEAD   | Polling suspends until back on a named branch           |
 
 No full re-index. No API waste. Just the delta.
 
@@ -211,18 +224,21 @@ Deleted files are detected and purged automatically. No stale blocks.
 
 ## Configuration
 
-| Option          | Default                    | Description                   |
-| --------------- | -------------------------- | ----------------------------- |
-| `embedder`      | `"ollama"`                 | `"openai"` or `"ollama"`      |
-| `model`         | `"nomic-embed-text"`       | Embedding model               |
-| `openaiBaseUrl` | `"https://api.openai.com"` | OpenAI-compatible endpoint    |
-| `openaiApiKey`  | —                          | API key (required for openai) |
-| `ollamaUrl`     | `"http://localhost:11434"` | Ollama server                 |
-| `vectorStore`   | `"lancedb"`                | `"qdrant"` or `"lancedb"`     |
-| `qdrantUrl`     | `"http://localhost:6333"`  | Qdrant server                 |
-| `batchSize`     | `20`                       | Embedding batch size          |
-| `maxResults`    | `20`                       | Max search results            |
-| `minScore`      | `0.4`                      | Similarity threshold          |
+| Option          | Default                    | Description                        |
+| --------------- | -------------------------- | ---------------------------------- |
+| `embedder`      | `"ollama"`                 | `"openai"` or `"ollama"`           |
+| `model`         | `"nomic-embed-text"`       | Embedding model                    |
+| `openaiBaseUrl` | `"https://api.openai.com"` | OpenAI-compatible endpoint         |
+| `openaiApiKey`  | —                          | API key (required for openai)      |
+| `ollamaUrl`     | `"http://localhost:11434"` | Ollama server                      |
+| `vectorStore`   | `"lancedb"`                | `"qdrant"` or `"lancedb"`          |
+| `qdrantUrl`     | `"http://localhost:6333"`  | Qdrant server                      |
+| `qdrantApiKey`  | —                          | API key for Qdrant Cloud           |
+| `batchSize`     | `20`                       | Embedding batch size               |
+| `maxResults`    | `20`                       | Max search results                 |
+| `minScore`      | `0.4`                      | Similarity threshold               |
+| `maxFileSize`   | `1000000`                  | Max file size in bytes (1MB)       |
+| `branchAware`   | `false`                    | Auto re-index on git branch switch |
 
 ---
 
