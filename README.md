@@ -175,10 +175,15 @@ When OpenCode runs in an opted-in project, two mechanisms keep the index fresh:
 
 **Branch Detection (opt-in via `branchAware`):**
 
-| Action          | Result                                                  |
-| --------------- | ------------------------------------------------------- |
-| Switch branches | Full re-index within 3s (hash cache — unchanged = free) |
-| Detached HEAD   | Polling suspends until back on a named branch           |
+Reads `.git/HEAD` directly (no subprocess) — poll interval configurable via `branchPollMs`.
+
+| Action            | Result                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| Switch branches   | Full re-index (hash cache — unchanged = free)                |
+| Detached HEAD     | Polling suspends until back on a named branch                |
+| Change detected   | Logs `🔄 Branch changed: X → Y` to console                   |
+| Re-index complete | Logs `✅ Re-indexed for branch X (N files → M blocks)`       |
+| Poll failure      | Logs error to console, retries next interval                 |
 
 No full re-index. No API waste. Just the delta.
 
@@ -239,6 +244,7 @@ Deleted files are detected and purged automatically. No stale blocks.
 | `minScore`      | `0.4`                      | Similarity threshold               |
 | `maxFileSize`   | `1000000`                  | Max file size in bytes (1MB)       |
 | `branchAware`   | `false`                    | Auto re-index on git branch switch |
+| `branchPollMs`  | `3000`                     | Poll interval for branch change detection (ms) |
 
 ---
 
