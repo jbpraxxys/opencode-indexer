@@ -10,6 +10,67 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 
 ---
 
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        OpenCode Agent                             │
+│  "Find the auth logic" ──▶ codebase_search ──▶ Qdrant ──▶ results│
+└──────────────────────────────────────────────────────────────────┘
+         │                                        ▲
+         │  tool calls                            │  vectors
+         ▼                                        │
+┌─────────────────────┐                  ┌─────────────────────┐
+│   Server Plugin      │                  │   Vector Store       │
+│   (src/index.ts)     │                  │   Qdrant / LanceDB   │
+│                      │                  │                      │
+│  ▪ codebase_index    │───embed────▶    │  idx_<sha256>       │
+│  ▪ codebase_search   │                  │  ▪ filePath          │
+│  ▪ codebase_status   │                  │  ▪ content           │
+│  ▪ file watcher      │                  │  ▪ startLine/endLine │
+│  ▪ system prompt     │                  │  ▪ language          │
+└─────────────────────┘                  │  ▪ hash + fileHash   │
+         │                                └─────────────────────┘
+         │  parse + embed
+         ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     Indexing Engine (src/engine.ts)                │
+│                                                                    │
+│  ┌───────────────┐   ┌───────────────┐   ┌───────────────────┐   │
+│  │ Tree-sitter    │   │ Hash Cache    │   │ Embedding API      │   │
+│  │ AST Parser     │   │               │   │                    │   │
+│  │                │   │ sha256(file)  │   │ OpenAI-compat      │   │
+│  │ TS/JS/Py/PHP   │   │ = stored?     │   │ or Ollama          │   │
+│  │ → functions    │   │ → skip!       │   │                    │   │
+│  │ → classes      │   │ → changed?    │   │ batch of 20        │   │
+│  │ → methods      │   │ → re-parse    │   │ 20K char trunc     │   │
+│  └───────────────┘   └───────────────┘   └───────────────────┘   │
+│                                                                    │
+│  Progress: .codebase-index-progress.json (live during indexing)    │
+└──────────────────────────────────────────────────────────────────┘
+         │
+         │  chokidar (600ms debounce)
+         ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                       Your Project                                │
+│                                                                   │
+│   src/auth.ts    src/utils.ts    src/payments.ts   ...            │
+│   .codebase-index   .gitignore   .opencodeignore                 │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Flow:**
+1. Agent calls `codebase_search("auth flow")`
+2. Plugin auto-indexes if no index exists (first use)
+3. Tree-sitter parses files into semantic blocks (functions, classes)
+4. Hash cache checks each file — skips unchanged, re-parses changed
+5. Embedding API converts blocks → vectors
+6. Qdrant stores vectors with metadata
+7. Query embedding → cosine similarity search → formatted results
+8. File watcher detects edits → re-indexes only the changed file
+
+---
+
 ## What's New
 
 | Feature                          | Description                                                                             |
