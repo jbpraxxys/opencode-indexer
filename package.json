@@ -1,0 +1,26 @@
+{
+  "name": "opencode-indexer",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.14.0"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.26.2",
+    "chokidar": "^5.0.0",
+    "glob": "^11.0.0",
+    "ollama": "^0.5.0",
+    "uuid": "^11.0.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.14.0",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.7.0"
+  }
+}
