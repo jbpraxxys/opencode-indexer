@@ -87,12 +87,15 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 
 ### 1. Qdrant (Vector Database)
 
-```bash
-# Docker (recommended)
-docker run -d --name qdrant -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
+Download the latest Qdrant binary, extract, and run:
 
-# Or Homebrew
-brew install qdrant && qdrant
+```bash
+# Download and extract
+curl -L https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-apple-darwin.tar.gz -o qdrant.tar.gz
+tar xzf qdrant.tar.gz
+
+# Run (starts on localhost:6333)
+./qdrant
 ```
 
 Verify: `curl http://localhost:6333/healthz`
