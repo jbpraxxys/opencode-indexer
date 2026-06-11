@@ -94,10 +94,12 @@ async function ensureIndexed(
 function makeCodebaseIndex(pluginConfig: IndexerConfig) {
   return tool({
     description:
-      "Index the workspace codebase for semantic search. " +
-      "Scans all source files, generates embeddings, " +
-      "and stores them in a vector database (Qdrant or LanceDB). " +
-      "Run this once before searching. Re-run when the codebase changes significantly. " +
+      "Index the workspace codebase for semantic code search. " +
+      "Uses tree-sitter AST parsing for Python, TypeScript, JavaScript, and PHP " +
+      "to extract functions, classes, and methods as semantic blocks. " +
+      "Falls back to line-based chunking for other languages. " +
+      "Hash caching skips unchanged files on re-index — fast incremental updates. " +
+      "Run this once before searching. Re-run when code changes. " +
       "Requires a .codebase-index marker file in the project root to proceed.",
     args: {
       force: z.boolean().describe("Force re-index even if index exists"),
@@ -393,7 +395,8 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
       output.system.push(
         "## Codebase Indexing\n" +
         "You have access to codebase indexing tools for semantic code search:\n\n" +
-        `- **codebase_index** — Build/search the codebase index (storage: ${backend}).\n` +
+        `- **codebase_index** — Build/refresh the codebase index (storage: ${backend}).\n` +
+        "  Uses tree-sitter AST parsing (TS, JS, Python, PHP) for semantic blocks. Hash caching skips unchanged files.\n" +
         "  Requires `.codebase-index` marker file in the project root (auto-index on first use).\n" +
         "- **codebase_search** — Natural language search across indexed code.\n" +
         "- **codebase_status** — Check if indexing is set up.\n\n" +
@@ -404,7 +407,8 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         "**Only fall back to grep/glob/find if `codebase_search` returns no results or fails.**\n" +
         "Do not use both — try search first, then fall back if needed.\n\n" +
         "For projects with a `.codebase-index` file, indexing happens automatically on first tool use. " +
-        "The file watcher keeps the index fresh as you edit code."
+        "The file watcher keeps the index fresh as you edit code. " +
+        "Re-indexing is fast — hash caching only reprocesses changed files."
       )
     },
     dispose: async () => {

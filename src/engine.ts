@@ -19,10 +19,28 @@
 import { createHash } from "crypto"
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "fs"
 import { extname, relative, join, dirname } from "path"
+import { fileURLToPath } from "url"
 import { v5 as uuidv5 } from "uuid"
 import { glob } from "glob"
 import { Ollama } from "ollama"
 import ignore from "ignore"
+import type { Parser as TreeSitterParserType, Language as TreeSitterLangType } from "web-tree-sitter"
+
+// Lazy-loaded tree-sitter — only imported when a supported language is encountered
+let TreeSitterParserCtor: typeof TreeSitterParserType | null = null
+let TreeSitterLangCtor: typeof TreeSitterLangType | null = null
+let tsInitDone = false
+async function ensureTreeSitter(): Promise<boolean> {
+  if (tsInitDone) return TreeSitterParserCtor !== null
+  tsInitDone = true
+  try {
+    const wts = await import("web-tree-sitter")
+    TreeSitterParserCtor = wts.Parser
+    TreeSitterLangCtor = wts.Language
+    await TreeSitterParserCtor.init()
+    return true
+  } catch { return false }
+}
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -92,6 +110,142 @@ const EXT_LANG: Record<string, string> = {
   ".css": "css", ".html": "html", ".vue": "vue", ".svelte": "svelte",
   ".md": "markdown", ".json": "json", ".yaml": "yaml", ".toml": "toml",
   ".sh": "bash", ".php": "php", ".swift": "swift", ".zig": "zig",
+}
+
+// ─── Tree-sitter Grammar Registry ────────────────────────
+
+/** Extensions that have tree-sitter grammars available */
+const TS_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".php"])
+
+/** Per-extension WASM file path (relative to plugin's node_modules) */
+const TS_WASM: Record<string, string> = {
+  ".ts":  "tree-sitter-typescript/tree-sitter-typescript.wasm",
+  ".tsx": "tree-sitter-typescript/tree-sitter-tsx.wasm",
+  ".js":  "tree-sitter-javascript/tree-sitter-javascript.wasm",
+  ".jsx": "tree-sitter-javascript/tree-sitter-javascript.wasm",
+  ".mjs": "tree-sitter-javascript/tree-sitter-javascript.wasm",
+  ".cjs": "tree-sitter-javascript/tree-sitter-javascript.wasm",
+  ".py":  "tree-sitter-python/tree-sitter-python.wasm",
+  ".php": "tree-sitter-php/tree-sitter-php.wasm",
+}
+
+/**
+ * AST node types that represent semantic code blocks (functions, classes, etc.).
+ * When we encounter one, we extract it as a standalone block for embedding.
+ * If a block exceeds MAX_BLOCK_CHARS, we recurse into its children.
+ */
+const TS_BLOCK_TYPES = new Set([
+  // TS/JS
+  "function_declaration", "generator_function_declaration",
+  "method_definition", "class_declaration", "abstract_class_declaration",
+  "interface_declaration", "type_alias_declaration", "enum_declaration",
+  "lexical_declaration", "export_statement",
+  // Python
+  "function_definition", "class_definition", "decorated_definition",
+  // PHP
+  "class_declaration", "interface_declaration", "trait_declaration",
+  "enum_declaration", "function_definition", "method_declaration",
+])
+
+// Cache: extension → loaded Language object
+const tsLangCache = new Map<string, any>()
+
+/** Resolve a WASM path from the plugin's own node_modules */
+function resolveWasm(relativePath: string): string {
+  // engine.ts → dist/engine.js → ../node_modules/<pkg>/<file>.wasm
+  const __filename = fileURLToPath(import.meta.url)
+  const __dir = dirname(__filename)
+  return join(__dir, "..", "node_modules", relativePath)
+}
+
+/** Load a grammar for the given extension (cached) */
+async function loadTsGrammar(ext: string): Promise<any | null> {
+  if (tsLangCache.has(ext)) return tsLangCache.get(ext)
+  const ok = await ensureTreeSitter()
+  if (!ok || !TreeSitterLangCtor) {
+    tsLangCache.set(ext, null)
+    return null
+  }
+  const wasmRel = TS_WASM[ext]
+  if (!wasmRel) { tsLangCache.set(ext, null); return null }
+  try {
+    const wasmPath = resolveWasm(wasmRel)
+    const wasmBytes = readFileSync(wasmPath)
+    const lang = await TreeSitterLangCtor.load(wasmBytes)
+    tsLangCache.set(ext, lang)
+    return lang
+  } catch {
+    tsLangCache.set(ext, null)
+    return null
+  }
+}
+
+/**
+ * Parse a single file using tree-sitter AST to extract semantic code blocks.
+ * Returns blocks with startLine/endLine based on AST node positions.
+ * Falls back gracefully: if grammar unavailable or no blocks found, returns null.
+ */
+async function parseFileWithTreeSitter(
+  filePath: string, content: string, ext: string, root: string,
+): Promise<any[] | null> {
+  if (!TS_EXTENSIONS.has(ext)) return null
+
+  const grammar = await loadTsGrammar(ext)
+  if (!grammar || !TreeSitterParserCtor) return null
+
+  const parser = new TreeSitterParserCtor()
+  parser.setLanguage(grammar)
+  const tree = parser.parse(content)
+  const relPath = relative(root, filePath)
+  const language = EXT_LANG[ext] ?? "unknown"
+
+  const blocks: any[] = []
+
+  function extractBlock(node: any): string {
+    return content.slice(node.startIndex, node.endIndex)
+  }
+
+  function walk(node: any) {
+    const nodeType: string = node.type
+
+    if (TS_BLOCK_TYPES.has(nodeType)) {
+      const text = extractBlock(node)
+      if (text.trim().length >= MIN_BLOCK_CHARS) {
+        if (text.length <= MAX_BLOCK_CHARS) {
+          // Perfect — fits in one block
+          const hash = sha256(text)
+          blocks.push({
+            id: uuidv5(`${relPath}:${node.startPosition.row + 1}:${hash}`, BLOCK_NAMESPACE),
+            filePath, relativePath: relPath, content: text,
+            startLine: node.startPosition.row + 1,
+            endLine: node.endPosition.row + 1,
+            language, hash,
+          })
+          return // Don't recurse — this node is already a block
+        } else {
+          // Block too large — recurse into children for sub-blocks
+          for (const child of node.children) {
+            walk(child)
+          }
+          return
+        }
+      }
+      // Too small — skip but still recurse (children might be meaningful)
+    }
+
+    // Not a block type — recurse into children
+    for (const child of node.children) {
+      walk(child)
+    }
+  }
+
+  walk(tree.rootNode)
+
+  // If tree-sitter found meaningful blocks, return them
+  if (blocks.length > 0) return blocks
+
+  // If no AST blocks found (unusual grammar, empty file), fall back to line-based
+  return null
 }
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -252,6 +406,8 @@ interface VectorStore {
   upsertBatch(rows: any[]): Promise<void>
   upsertPoints(rows: any[]): Promise<void>
   deleteByFile(filePath: string): Promise<void>
+  getFileHash(filePath: string): Promise<string | null>
+  listStoredFiles(): Promise<string[]>
   search(vector: number[], maxResults: number): Promise<any[]>
   count(): Promise<number>
   getDbPath(): string
@@ -285,6 +441,24 @@ async function createLanceStore(workspaceRoot: string, colName: string): Promise
     async deleteByFile(filePath: string) {
       if (!table) return
       await table.delete(`filePath = '${filePath.replace(/'/g, "''")}'`)
+    },
+    async getFileHash(filePath: string): Promise<string | null> {
+      if (!table) return null
+      try {
+        const results = await table
+          .filter(`filePath = '${filePath.replace(/'/g, "''")}'`)
+          .limit(1)
+          .toArray()
+        return results?.[0]?.fileHash ?? null
+      } catch { return null }
+    },
+    async listStoredFiles(): Promise<string[]> {
+      if (!table) return []
+      try {
+        const all = await table.toArray()
+        const files: string[] = all.map((r: any) => r.filePath as string).filter(Boolean) as string[]
+        return [...new Set(files)]
+      } catch { return [] }
     },
     async search(vector: number[], maxResults: number) {
       if (!table) return []
@@ -328,6 +502,7 @@ function createQdrantStore(qdrantUrl: string, colName: string, apiKey?: string):
           payload: {
             filePath: r.filePath, relativePath: r.relativePath, content: r.content,
             startLine: r.startLine, endLine: r.endLine, language: r.language, hash: r.hash,
+            fileHash: r.fileHash ?? "",
           },
         }))
         await fetch(`${url}/collections/${colName}/points`, {
@@ -342,6 +517,7 @@ function createQdrantStore(qdrantUrl: string, colName: string, apiKey?: string):
         payload: {
           filePath: r.filePath, relativePath: r.relativePath, content: r.content,
           startLine: r.startLine, endLine: r.endLine, language: r.language, hash: r.hash,
+          fileHash: r.fileHash ?? "",
         },
       }))
       for (let i = 0; i < points.length; i += 100) {
@@ -358,6 +534,43 @@ function createQdrantStore(qdrantUrl: string, colName: string, apiKey?: string):
           filter: { must: [{ key: "filePath", match: { value: filePath } }] },
         }),
       })
+    },
+    async getFileHash(filePath: string): Promise<string | null> {
+      try {
+        const res = await fetch(`${url}/collections/${colName}/points/scroll`, {
+          method: "POST", headers,
+          body: JSON.stringify({
+            filter: { must: [{ key: "filePath", match: { value: filePath } }] },
+            limit: 1, with_payload: true, with_vector: false,
+          }),
+        })
+        const data = await res.json() as any
+        const points = data.result?.points ?? []
+        if (points.length === 0) return null
+        return points[0].payload?.fileHash ?? null
+      } catch { return null }
+    },
+    async listStoredFiles(): Promise<string[]> {
+      try {
+        const files = new Set<string>()
+        let offset: string | null = null
+        // Scroll through all points in batches
+        for (let i = 0; i < 50; i++) { // safety limit: 50 scroll pages max
+          const body: any = { limit: 100, with_payload: ["filePath"], with_vector: false }
+          if (offset) body.offset = offset
+          const res = await fetch(`${url}/collections/${colName}/points/scroll`, {
+            method: "POST", headers, body: JSON.stringify(body),
+          })
+          const data = await res.json() as any
+          const points = data.result?.points ?? []
+          for (const p of points) {
+            if (p.payload?.filePath) files.add(p.payload.filePath)
+          }
+          if (!data.result?.next_page_offset) break
+          offset = data.result.next_page_offset
+        }
+        return Array.from(files)
+      } catch { return [] }
     },
     async search(vector: number[], maxResults: number) {
       const res = await fetch(`${url}/collections/${colName}/points/search`, {
@@ -384,52 +597,78 @@ function createQdrantStore(qdrantUrl: string, colName: string, apiKey?: string):
 
 // ─── Parser ───────────────────────────────────────────────
 
-function parseFile(filePath: string, root: string, maxSize: number): any[] {
+/**
+ * Parse a file into code blocks. Tries tree-sitter AST parsing first
+ * for supported languages (TS, JS, Python, PHP); falls back to
+ * line-based chunking for unsupported languages or when tree-sitter is unavailable.
+ */
+async function parseFile(filePath: string, root: string, maxSize: number): Promise<any[]> {
   try {
     const buf = readFileSync(filePath)
     if (buf.length > maxSize) return []
 
     const content = buf.toString("utf-8")
-    const lines = content.split("\n")
-    const relPath = relative(root, filePath)
     const ext = extname(filePath)
-    const language = EXT_LANG[ext] ?? "unknown"
 
-    const blocks: any[] = []
-    let current: string[] = []
-    let startLine = 1
-
-    for (let i = 0; i < lines.length; i++) {
-      current.push(lines[i])
-      const text = current.join("\n")
-      if (text.length >= MAX_BLOCK_CHARS) {
-        const hash = sha256(text)
-        blocks.push({
-          id: uuidv5(`${relPath}:${startLine}:${hash}`, BLOCK_NAMESPACE),
-          filePath, relativePath: relPath, content: text,
-          startLine, endLine: i + 1, language, hash,
-        })
-        current = []
-        startLine = i + 2
-      }
+    // Try tree-sitter first for supported extensions
+    if (TS_EXTENSIONS.has(ext)) {
+      const tsBlocks = await parseFileWithTreeSitter(filePath, content, ext, root)
+      if (tsBlocks && tsBlocks.length > 0) return tsBlocks
+      // Fall through to line-based if tree-sitter returned null or empty
     }
 
-    if (current.length > 0) {
-      const text = current.join("\n")
-      if (text.trim().length >= MIN_BLOCK_CHARS) {
-        const hash = sha256(text)
-        blocks.push({
-          id: uuidv5(`${relPath}:${startLine}:${hash}`, BLOCK_NAMESPACE),
-          filePath, relativePath: relPath, content: text,
-          startLine, endLine: lines.length, language, hash,
-        })
-      }
-    }
-
-    return blocks
+    // Line-based chunking (fallback)
+    return parseFileLineBased(filePath, content, root, maxSize)
   } catch {
     return []
   }
+}
+
+/**
+ * Line-based chunking — original behavior. Splits file content at ~1000 char
+ * boundaries. Used as fallback when tree-sitter is unavailable or for
+ * unsupported languages.
+ */
+function parseFileLineBased(
+  filePath: string, content: string, root: string, _maxSize: number,
+): any[] {
+  const lines = content.split("\n")
+  const relPath = relative(root, filePath)
+  const ext = extname(filePath)
+  const language = EXT_LANG[ext] ?? "unknown"
+
+  const blocks: any[] = []
+  let current: string[] = []
+  let startLine = 1
+
+  for (let i = 0; i < lines.length; i++) {
+    current.push(lines[i])
+    const text = current.join("\n")
+    if (text.length >= MAX_BLOCK_CHARS) {
+      const hash = sha256(text)
+      blocks.push({
+        id: uuidv5(`${relPath}:${startLine}:${hash}`, BLOCK_NAMESPACE),
+        filePath, relativePath: relPath, content: text,
+        startLine, endLine: i + 1, language, hash,
+      })
+      current = []
+      startLine = i + 2
+    }
+  }
+
+  if (current.length > 0) {
+    const text = current.join("\n")
+    if (text.trim().length >= MIN_BLOCK_CHARS) {
+      const hash = sha256(text)
+      blocks.push({
+        id: uuidv5(`${relPath}:${startLine}:${hash}`, BLOCK_NAMESPACE),
+        filePath, relativePath: relPath, content: text,
+        startLine, endLine: lines.length, language, hash,
+      })
+    }
+  }
+
+  return blocks
 }
 
 // ─── Indexer Engine ───────────────────────────────────────
@@ -494,7 +733,7 @@ export class CodebaseIndexer {
     await this.store.init(dimension)
   }
 
-  async index(workspaceRoot: string, onProgress?: (msg: string) => void): Promise<{ files: number; blocks: number }> {
+  async index(workspaceRoot: string, onProgress?: (msg: string) => void): Promise<{ files: number; blocks: number; skipped: number }> {
     if (!this.store) throw new Error("Call init() first")
 
     const log = onProgress || ((msg: string) => console.log(msg))
@@ -516,20 +755,69 @@ export class CodebaseIndexer {
     if (indexable.length === 0) {
       log("⚠ No indexable files found — nothing to do")
       progress({ phase: "done", message: "No indexable files found", current: 0, total: 0, percentage: 100, updatedAt: "" })
-      return { files: 0, blocks: 0 }
+      return { files: 0, blocks: 0, skipped: 0 }
     }
 
-    // Phase: parsing
+    // Gather stored file paths for deletion detection
+    const storedFiles = new Set(await this.store.listStoredFiles())
+
+    // Phase: parsing (with hash caching)
     progress({ phase: "parsing", message: "Parsing files...", current: 0, total: indexable.length, percentage: 0, updatedAt: "" })
     const allBlocks: any[] = []
+    let skippedCount = 0
+    let parsedCount = 0
     const totalFiles = indexable.length
 
     for (let fi = 0; fi < totalFiles; fi++) {
       const file = indexable[fi]
-      const blocks = parseFile(file, workspaceRoot, this.maxFileSize)
+      const relPath = relative(workspaceRoot, file)
+
+      // Compute file hash
+      let fileHash = ""
+      try {
+        const buf = readFileSync(file)
+        if (buf.length <= this.maxFileSize) {
+          fileHash = sha256(buf.toString("utf-8"))
+        }
+      } catch { /* unreadable — skip */ }
+
+      // Hash cache check: skip if file hasn't changed
+      if (fileHash) {
+        const storedHash = await this.store.getFileHash(file)
+        if (storedHash && storedHash === fileHash) {
+          skippedCount++
+          storedFiles.delete(file)
+          // Still report progress every 50 files
+          if ((fi + 1) % 50 === 0 || fi === totalFiles - 1) {
+            const msg = `📖 Scanned ${fi + 1}/${totalFiles} files — ${skippedCount} unchanged, ${parsedCount} updated`
+            log(msg)
+            progress({
+              phase: "parsing",
+              message: msg,
+              current: fi + 1,
+              total: totalFiles,
+              percentage: Math.round(((fi + 1) / totalFiles) * 100),
+              updatedAt: "",
+            })
+          }
+          continue
+        }
+      }
+
+      // File is new or changed — delete old blocks, parse fresh
+      await this.store.deleteByFile(file)
+      const blocks = await parseFile(file, workspaceRoot, this.maxFileSize)
+
+      // Stamp each block with the file hash
+      for (const b of blocks) {
+        b.fileHash = fileHash
+      }
       allBlocks.push(...blocks)
+      parsedCount++
+      storedFiles.delete(file)
+
       if ((fi + 1) % 50 === 0 || fi === totalFiles - 1) {
-        const msg = `📖 Parsed ${fi + 1}/${totalFiles} files → ${allBlocks.length} code blocks so far`
+        const msg = `📖 Scanned ${fi + 1}/${totalFiles} files → ${allBlocks.length} blocks (${skippedCount} unchanged, ${parsedCount} updated)`
         log(msg)
         progress({
           phase: "parsing",
@@ -542,10 +830,24 @@ export class CodebaseIndexer {
       }
     }
 
+    // Remove deleted files from the store
+    if (storedFiles.size > 0) {
+      log(`🗑 Removing ${storedFiles.size} deleted files from index...`)
+      for (const deletedFile of storedFiles) {
+        await this.store.deleteByFile(deletedFile)
+      }
+    }
+
+    if (allBlocks.length === 0 && parsedCount === 0 && skippedCount > 0) {
+      log(`✅ All ${skippedCount} files unchanged — index is up to date`)
+      progress({ phase: "done", message: "Index up to date", current: totalFiles, total: totalFiles, percentage: 100, updatedAt: "" })
+      return { files: indexable.length, blocks: await this.store.count(), skipped: skippedCount }
+    }
+
     if (allBlocks.length === 0) {
-      log("⚠ No code blocks generated from files")
+      log("⚠ No code blocks generated from changed files")
       progress({ phase: "done", message: "No code blocks generated", current: totalFiles, total: totalFiles, percentage: 100, updatedAt: "" })
-      return { files: indexable.length, blocks: 0 }
+      return { files: indexable.length, blocks: await this.store.count(), skipped: skippedCount }
     }
 
     // Phase: embedding
@@ -574,16 +876,22 @@ export class CodebaseIndexer {
       })
     }
 
-    // Phase: saving
+    // Phase: saving (upsertPoints — append, don't wipe existing unchanged blocks)
     log(`💾 Saving ${allRows.length} vectors to Qdrant...`)
     progress({ phase: "saving", message: "Saving vectors...", current: allRows.length, total: allRows.length, percentage: 95, updatedAt: "" })
-    await this.store.upsertBatch(allRows)
+
+    // Use upsertPoints (append) instead of upsertBatch (wipe-and-replace)
+    // because unchanged files' blocks are still in the store
+    if (allRows.length > 0) {
+      await this.store.upsertPoints(allRows)
+    }
 
     // Done
-    const doneMsg = `✅ Done — ${indexable.length} files → ${allRows.length} blocks indexed`
+    const totalBlocks = await this.store.count()
+    const doneMsg = `✅ Done — ${indexable.length} files scanned: ${skippedCount} unchanged, ${parsedCount} updated → ${totalBlocks} blocks total`
     log(doneMsg)
-    progress({ phase: "done", message: doneMsg, current: allRows.length, total: allRows.length, percentage: 100, updatedAt: "" })
-    return { files: indexable.length, blocks: allRows.length }
+    progress({ phase: "done", message: doneMsg, current: totalBlocks, total: totalBlocks, percentage: 100, updatedAt: "" })
+    return { files: indexable.length, blocks: totalBlocks, skipped: skippedCount }
   }
 
   async indexFile(filePath: string, onProgress?: (msg: string) => void): Promise<{ blocks: number }> {
@@ -593,8 +901,28 @@ export class CodebaseIndexer {
     const ext = extname(filePath)
     if (!EXTENSIONS.has(ext)) return { blocks: 0 }
 
-    const blocks = parseFile(filePath, this.workspaceRoot, this.maxFileSize)
+    // Compute file hash
+    let fileHash = ""
+    try {
+      const buf = readFileSync(filePath)
+      if (buf.length <= this.maxFileSize) {
+        fileHash = sha256(buf.toString("utf-8"))
+      }
+    } catch { return { blocks: 0 } }
+
+    // Hash cache check
+    if (fileHash) {
+      const storedHash = await this.store.getFileHash(filePath)
+      if (storedHash && storedHash === fileHash) {
+        return { blocks: 0 } // unchanged
+      }
+    }
+
+    const blocks = await parseFile(filePath, this.workspaceRoot, this.maxFileSize)
     if (blocks.length === 0) return { blocks: 0 }
+
+    // Stamp with file hash
+    for (const b of blocks) b.fileHash = fileHash
 
     const relPath = relative(this.workspaceRoot, filePath)
     log(`📝 ${relPath} — ${blocks.length} blocks`)
