@@ -1,79 +1,28 @@
 /**
- * TUI Plugin — Sidebar Progress Indicator
+ * TUI Plugin — Presence Indicator (minimal)
  *
- * Renders indexing progress in the OpenCode sidebar during codebase_index.
- * Reads progress state from .codebase-index-progress.json at the project root.
+ * The full progress display lives in the server plugin's tool output
+ * (visible in the chat textarea during indexing). This TUI plugin is
+ * a lightweight presence marker — it tells OpenCode that codebase
+ * indexing tools are available, nothing more.
  *
- * Uses @opentui/solid JSX — required by OpenCode's slot rendering system.
+ * SolidJS sidebar widgets require @opentui/solid + solid-js runtime
+ * which adds fragile dependency chains. The textarea output is more
+ * reliable and already shows full progress with phase icons, counts,
+ * and percentages.
  */
 
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
-import { existsSync, readFileSync } from "fs"
+import { existsSync } from "fs"
 import { join } from "path"
-
-// ─── Types ────────────────────────────────────────────────
-
-interface ProgressState {
-  phase: "idle" | "scanning" | "parsing" | "embedding" | "saving" | "done" | "error"
-  message: string
-  current: number
-  total: number
-  percentage: number
-  updatedAt: string
-}
-
-// ─── Helpers ──────────────────────────────────────────────
-
-const PHASE_ICONS: Record<string, string> = {
-  idle: "○",
-  scanning: "🔍",
-  parsing: "📖",
-  embedding: "⚡",
-  saving: "💾",
-  done: "✅",
-  error: "❌",
-}
-
-function readProgress(root: string): ProgressState | null {
-  const path = join(root, ".codebase-index-progress.json")
-  if (!existsSync(path)) return null
-  try {
-    return JSON.parse(readFileSync(path, "utf-8"))
-  } catch {
-    return null
-  }
-}
-
-// ─── TUI Plugin ───────────────────────────────────────────
 
 export const tui: TuiPlugin = async (api, _options, _meta) => {
   const projectDir = api.state.path.directory
   const markerPath = join(projectDir, ".codebase-index")
 
+  // Only activate for opted-in projects
   if (!existsSync(markerPath)) return
 
-  api.slots.register({
-    order: 100,
-    slots: {
-      sidebar_content: (_ctx, _props) => {
-        const progress = readProgress(projectDir)
-        if (!progress) return null
-
-        // Hide "done" or "idle" after 30 seconds
-        if (progress.phase === "done" || progress.phase === "idle") {
-          const age = Date.now() - new Date(progress.updatedAt).getTime()
-          if (age > 30_000) return null
-        }
-
-        // Don't show for idle with no timestamp (never indexed)
-        if (progress.phase === "idle" && !progress.updatedAt) return null
-
-        const icon = PHASE_ICONS[progress.phase] ?? "○"
-        const pct = progress.percentage > 0 ? ` ${progress.percentage}%` : ""
-        const text = `${icon}${pct} ${progress.message}`
-
-        return <text content={text} />
-      },
-    },
-  })
+  // Mark presence in kv store (server plugin can check this)
+  await api.kv.set("opencode-indexer:active", "1")
 }
