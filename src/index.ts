@@ -388,6 +388,7 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
   let branchInterval: ReturnType<typeof setInterval> | null = null
   if (projectDir && hasMarker(projectDir) && pluginConfig.branchAware) {
     let lastBranch = getCurrentBranch(projectDir)
+    const pollMs = pluginConfig.branchPollMs ?? 3000
 
     branchInterval = setInterval(async () => {
       try {
@@ -395,6 +396,7 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         if (!current || current === lastBranch) return
 
         // Branch change detected — full re-index with hash caching
+        console.log(`🔄 Branch changed: ${String(lastBranch)} → ${current} — re-indexing...`)
         const idx = getIndexer(projectDir, pluginConfig)
         await idx.ensureReady()
         await idx.init()
@@ -404,10 +406,11 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         lastBranch = current
 
         const result = await idx.index(projectDir)
+        console.log(`✅ Re-indexed for branch ${current} (${result.files} files → ${result.blocks} blocks)`)
       } catch (err: any) {
-        // Best-effort — log and retry next poll
+        console.error(`⚠ Branch poll error:`, err.message ?? err)
       }
-    }, 3000) // poll every 3 seconds
+    }, pollMs)
   }
 
   return {

@@ -24,7 +24,6 @@ import { v5 as uuidv5 } from "uuid"
 import { glob } from "glob"
 import { Ollama } from "ollama"
 import ignore from "ignore"
-import { execSync } from "child_process"
 import type { Parser as TreeSitterParserType, Language as TreeSitterLangType } from "web-tree-sitter"
 
 // Lazy-loaded tree-sitter — only imported when a supported language is encountered
@@ -60,6 +59,8 @@ export interface IndexerConfig {
   maxFileSize?: number
   /** Enable branch-aware indexing — polls .git/HEAD and re-indexes on branch change */
   branchAware?: boolean
+  /** Polling interval in ms for branch change detection (default 3000) */
+  branchPollMs?: number
 }
 
 export interface SearchResult {
@@ -311,14 +312,14 @@ const BRANCH_FILE = ".codebase-index-branch"
  */
 export function getCurrentBranch(root: string): string | null {
   try {
-    const head = execSync("git rev-parse --abbrev-ref HEAD", {
-      cwd: root,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 3000,
-    }).trim()
-    if (!head || head === "HEAD") return null // detached HEAD
-    return head
+    const headPath = join(root, ".git", "HEAD")
+    if (!existsSync(headPath)) return null
+    const head = readFileSync(headPath, "utf-8").trim()
+    // Detached HEAD: file contains a raw commit SHA
+    if (head.match(/^[0-9a-f]{40}$/)) return null
+    // Normal branch: "ref: refs/heads/branch-name"
+    const match = head.match(/^ref: refs\/heads\/(.+)$/)
+    return match ? match[1] : null
   } catch {
     return null
   }
@@ -728,6 +729,7 @@ export class CodebaseIndexer {
   private qdrantUrl: string
   private qdrantApiKey?: string
   branchAware: boolean
+  branchPollMs: number
 
   constructor(workspaceRoot: string, config: IndexerConfig = {}) {
     this.workspaceRoot = workspaceRoot
@@ -736,6 +738,7 @@ export class CodebaseIndexer {
     this.qdrantUrl = config.qdrantUrl ?? "http://localhost:6333"
     this.qdrantApiKey = config.qdrantApiKey
     this.branchAware = config.branchAware ?? false
+    this.branchPollMs = config.branchPollMs ?? 3000
 
     const embedderType = config.embedder ?? "ollama"
     const model = config.model ?? "nomic-embed-text"
