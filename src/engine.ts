@@ -17,8 +17,8 @@
  */
 
 import { createHash } from "crypto"
-import { readFileSync, existsSync, mkdirSync } from "fs"
-import { extname, relative, join } from "path"
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "fs"
+import { extname, relative, join, dirname } from "path"
 import { v5 as uuidv5 } from "uuid"
 import { glob } from "glob"
 import { Ollama } from "ollama"
@@ -51,6 +51,15 @@ export interface SearchResult {
   score: number
 }
 
+export interface ProgressState {
+  phase: "idle" | "scanning" | "parsing" | "embedding" | "saving" | "done" | "error"
+  message: string
+  current: number
+  total: number
+  percentage: number
+  updatedAt: string
+}
+
 // ─── Constants ────────────────────────────────────────────
 
 const BLOCK_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
@@ -64,7 +73,7 @@ const IGNORE = [
   "**/.next/**", "**/vendor/**", "**/__pycache__/**", "**/.venv/**",
   "**/target/**", "**/*.min.js", "**/*.min.css", "**/*.map",
   "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml",
-  "**/.codebase-index/**",
+  "**/.codebase-index/**", ".codebase-index-progress.json",
 ]
 
 const EXTENSIONS = new Set([
@@ -131,6 +140,29 @@ export function loadProjectIgnore(root: string): ReturnType<typeof ignore> {
   }
 
   return ig
+}
+
+// ─── Progress File ──────────────────────────────────────
+
+const PROGRESS_FILE = ".codebase-index-progress.json"
+
+/**
+ * Write indexing progress state to a JSON file at the project root.
+ * The TUI sidebar plugin reads this file to render a live progress bar.
+ * Uses a separate filename from the .codebase-index marker to avoid
+ * conflicts (the marker may be a file or directory).
+ */
+export function writeProgressFile(
+  root: string,
+  state: ProgressState,
+): void {
+  try {
+    writeFileSync(
+      join(root, PROGRESS_FILE),
+      JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2),
+      "utf-8",
+    )
+  } catch { /* best-effort — never crash on progress writes */ }
 }
 
 // ─── Embedder Interface ──────────────────────────────────
@@ -466,7 +498,12 @@ export class CodebaseIndexer {
     if (!this.store) throw new Error("Call init() first")
 
     const log = onProgress || ((msg: string) => console.log(msg))
+    const progress = (state: ProgressState) => {
+      writeProgressFile(workspaceRoot, state)
+    }
 
+    // Phase: scanning
+    progress({ phase: "scanning", message: "Scanning files...", current: 0, total: 0, percentage: 0, updatedAt: "" })
     log("🔍 Scanning files...")
     const projectIgnore = loadProjectIgnore(workspaceRoot)
     const files = await glob("**/*", {
@@ -478,9 +515,12 @@ export class CodebaseIndexer {
 
     if (indexable.length === 0) {
       log("⚠ No indexable files found — nothing to do")
+      progress({ phase: "done", message: "No indexable files found", current: 0, total: 0, percentage: 100, updatedAt: "" })
       return { files: 0, blocks: 0 }
     }
 
+    // Phase: parsing
+    progress({ phase: "parsing", message: "Parsing files...", current: 0, total: indexable.length, percentage: 0, updatedAt: "" })
     const allBlocks: any[] = []
     const totalFiles = indexable.length
 
@@ -489,16 +529,28 @@ export class CodebaseIndexer {
       const blocks = parseFile(file, workspaceRoot, this.maxFileSize)
       allBlocks.push(...blocks)
       if ((fi + 1) % 50 === 0 || fi === totalFiles - 1) {
-        log(`📖 Parsed ${fi + 1}/${totalFiles} files → ${allBlocks.length} code blocks so far`)
+        const msg = `📖 Parsed ${fi + 1}/${totalFiles} files → ${allBlocks.length} code blocks so far`
+        log(msg)
+        progress({
+          phase: "parsing",
+          message: msg,
+          current: fi + 1,
+          total: totalFiles,
+          percentage: Math.round(((fi + 1) / totalFiles) * 100),
+          updatedAt: "",
+        })
       }
     }
 
     if (allBlocks.length === 0) {
       log("⚠ No code blocks generated from files")
+      progress({ phase: "done", message: "No code blocks generated", current: totalFiles, total: totalFiles, percentage: 100, updatedAt: "" })
       return { files: indexable.length, blocks: 0 }
     }
 
+    // Phase: embedding
     log(`⚡ Embedding ${allBlocks.length} blocks in batches of ${this.batchSize}...`)
+    progress({ phase: "embedding", message: "Embedding code blocks...", current: 0, total: allBlocks.length, percentage: 0, updatedAt: "" })
     const totalBatches = Math.ceil(allBlocks.length / this.batchSize)
     const allRows: any[] = []
 
@@ -510,12 +562,27 @@ export class CodebaseIndexer {
       for (let j = 0; j < batch.length; j++) {
         allRows.push({ ...batch[j], vector: embeddings[j] })
       }
-      log(`📡 Embedding batch ${batchNum}/${totalBatches} (${allRows.length}/${allBlocks.length} blocks)`)
+      const msg = `📡 Embedding batch ${batchNum}/${totalBatches} (${allRows.length}/${allBlocks.length} blocks)`
+      log(msg)
+      progress({
+        phase: "embedding",
+        message: msg,
+        current: allRows.length,
+        total: allBlocks.length,
+        percentage: Math.round((allRows.length / allBlocks.length) * 100),
+        updatedAt: "",
+      })
     }
 
+    // Phase: saving
     log(`💾 Saving ${allRows.length} vectors to Qdrant...`)
+    progress({ phase: "saving", message: "Saving vectors...", current: allRows.length, total: allRows.length, percentage: 95, updatedAt: "" })
     await this.store.upsertBatch(allRows)
-    log(`✅ Done — ${indexable.length} files → ${allRows.length} blocks indexed`)
+
+    // Done
+    const doneMsg = `✅ Done — ${indexable.length} files → ${allRows.length} blocks indexed`
+    log(doneMsg)
+    progress({ phase: "done", message: doneMsg, current: allRows.length, total: allRows.length, percentage: 100, updatedAt: "" })
     return { files: indexable.length, blocks: allRows.length }
   }
 
