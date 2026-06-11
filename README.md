@@ -1,34 +1,24 @@
-# Codebase Indexer
+# Hermes Codebase Indexer
 
-**Semantic code search for OpenCode** — a plugin that indexes your project's source code into a vector database (Qdrant) and enables the AI agent to search it using natural language queries. Includes automatic file watching so the index stays fresh as you edit.
+<p align="center">
+  <img src="banner.png" alt="Hermes Codebase Indexer" width="600">
+</p>
 
-Instead of grepping for exact keywords, the agent can ask "how does authentication work" and find relevant code across your entire project.
+**Semantic code search for OpenCode** — a plugin that indexes your project's source code into a vector database and enables the AI agent to search it using natural language. Tree-sitter AST parsing produces clean semantic blocks (functions, classes, methods). Hash caching skips unchanged files on re-index — fast incremental updates.
+
+Instead of grepping for exact keywords, ask "how does authentication work" and find relevant code across your entire project.
 
 ---
 
-## Architecture
+## What's New
 
-```
-┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
-│  Your Codebase   │───▶│  Embedding API   │───▶│  Qdrant          │
-│  (files)         │    │  (OpenAI-compat  │    │  Vector DB       │
-│                  │    │   or Ollama)     │    │  (localhost:6333)│
-└──────────────────┘    └──────────────────┘    └──────────────────┘
-         │                                              ▲
-         ▼                                              │
-┌──────────────────┐                          ┌──────────────────┐
-│  OpenCode Plugin │                          │  File Watcher    │
-│  (3 agent tools) │                          │  (auto-updates)  │
-└──────────────────┘                          └──────────────────┘
-```
-
-**Three components:**
-
-| Component        | What it does                                    | Options                                     |
-| ---------------- | ----------------------------------------------- | ------------------------------------------- |
-| **Embedder**     | Converts code blocks into vector embeddings     | OpenAI-compatible API or Ollama (local)     |
-| **Vector Store** | Stores embeddings for fast similarity search    | Qdrant or LanceDB                           |
-| **Plugin**       | 3 tools inside OpenCode + auto file watching    | OpenCode plugin at `~/opencode-indexer`     |
+| Feature | Description |
+|---|---|
+| **Tree-sitter AST Parsing** | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP |
+| **Hash Caching** | SHA-256 per-file hashes — re-indexing only processes changed files |
+| **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore) |
+| **Progress File** | Real-time `.codebase-index-progress.json` during indexing (phase, percentage, counts) |
+| **Deleted File Detection** | Automatically removes orphaned blocks when files are deleted |
 
 ---
 
@@ -36,71 +26,38 @@ Instead of grepping for exact keywords, the agent can ask "how does authenticati
 
 ### 1. Qdrant (Vector Database)
 
-Qdrant stores code embeddings and performs similarity searches. It runs as a server on `localhost:6333`.
-
-**Option A: Docker (Recommended)**
-
 ```bash
-docker run -d --name qdrant \
-  -p 6333:6333 \
-  -p 6334:6334 \
-  -v $(pwd)/qdrant_storage:/qdrant/storage \
-  qdrant/qdrant
+# Docker (recommended)
+docker run -d --name qdrant -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
+
+# Or Homebrew
+brew install qdrant && qdrant
 ```
 
-**Option B: Homebrew (macOS)**
+Verify: `curl http://localhost:6333/healthz`
 
-```bash
-brew install qdrant
-qdrant
-```
+### 2. Embedding API
 
-**Verify:**
+**Option A: OpenAI-compatible** (recommended) — any endpoint with `/v1/embeddings`
 
-```bash
-curl http://localhost:6333/healthz
-# → healthz check passed
-```
-
-### 2. Embedding API (Choose One)
-
-**Option A: OpenAI-compatible API (Recommended for teams)**
-An API endpoint that accepts OpenAI-format embedding requests. Configured via API key + base URL.
-
-**Option B: Ollama (100% local, free)**
-
-```bash
-# Install Ollama
-brew install ollama
-
-# Start the server
-ollama serve
-
-# Pull an embedding model
-ollama pull nomic-embed-text    # ~274MB, good balance
-ollama pull mxbai-embed-large   # Higher quality, larger
-```
+**Option B: Ollama** (local, free) — `ollama pull nomic-embed-text`
 
 ---
 
 ## Installation
 
-### 1. Install the Indexer
-
 ```bash
-git clone <your-repo-url> ~/opencode-indexer
+git clone https://github.com/jbpraxxys/opencode-indexer.git ~/opencode-indexer
 cd ~/opencode-indexer
 npm install
 npm run build
 ```
 
-### 2. Install the OpenCode Plugin (Global)
-
-Open `~/.config/opencode/opencode.json` and add to the `"plugin"` array:
+Add to `~/.config/opencode/opencode.json`:
 
 ```json
 "plugin": [
-    ["/path/to/opencode-indexer", {
+    ["/Users/jdbernardo/opencode-indexer", {
         "embedder": "openai",
         "openaiBaseUrl": "https://your-embedding-proxy.example.com/code",
         "openaiApiKey": "sk-...",
@@ -111,36 +68,14 @@ Open `~/.config/opencode/opencode.json` and add to the `"plugin"` array:
 ]
 ```
 
-### 3. Opt a Project In
+Opt a project in:
 
 ```bash
 cd ~/Sites/your-project
 touch .codebase-index
 ```
 
-The `.codebase-index` marker file tells the plugin to index this project and enables the file watcher.
-
----
-
-## Configuration
-
-### Plugin Options
-
-All options go into the plugin config array in `opencode.json`:
-
-| Option          | Default                    | Description                                |
-| --------------- | -------------------------- | ------------------------------------------ |
-| `embedder`      | `"ollama"`                 | `"openai"` or `"ollama"`                   |
-| `model`         | `"nomic-embed-text"`       | Embedding model name                       |
-| `openaiBaseUrl` | `"https://api.openai.com"` | OpenAI-compatible endpoint                 |
-| `openaiApiKey`  | —                          | API key (required for `"openai"` embedder) |
-| `ollamaUrl`     | `"http://localhost:11434"` | Ollama server URL                          |
-| `vectorStore`   | `"lancedb"`                | `"qdrant"` or `"lancedb"`                  |
-| `qdrantUrl`     | `"http://localhost:6333"`  | Qdrant server URL                          |
-| `qdrantApiKey`  | —                          | Qdrant API key (optional)                  |
-| `batchSize`     | `20`                       | Embedding batch size                       |
-| `maxResults`    | `20`                       | Max search results per query               |
-| `minScore`      | `0.4`                      | Minimum similarity threshold               |
+Restart OpenCode.
 
 ---
 
@@ -148,54 +83,36 @@ All options go into the plugin config array in `opencode.json`:
 
 ### Inside OpenCode
 
-Once the plugin is installed, the following tools are available to the AI agent:
+Three tools available to the AI agent:
 
-| Tool              | What it does                                    |
-| ----------------- | ----------------------------------------------- |
-| `codebase_index`  | Index the workspace (run once per project)      |
-| `codebase_search` | Search indexed code using natural language      |
-| `codebase_status` | Check if an index exists and its stats          |
+| Tool | What it does |
+|---|---|
+| `codebase_index` | Index the project (tree-sitter parsing + hash caching) |
+| `codebase_search` | Semantic search across indexed code |
+| `codebase_status` | Check index stats |
 
-**The agent follows a Search Priority Rule:** always tries `codebase_search` first before falling back to grep/glob/find. Only falls back if the index has no results.
+The agent follows a **Search Priority Rule**: always tries `codebase_search` first, falls back to grep/glob only if no results.
 
-Ask the AI naturally:
+### Auto-Indexing (File Watcher)
 
-> _"Search for how authentication works in this project"_
-> _"Find where the database migrations are"_
-> _"How does the login flow work?"_
-> _"Index this project so you can search it"_
+When OpenCode runs in an opted-in project, the file watcher keeps the index fresh:
 
-### File Watcher (Auto-Indexing)
+| Action | Result |
+|---|---|
+| Save/edit a file | Re-indexes only that file (600ms debounce) |
+| Create a new file | Indexes immediately |
+| Delete a file | Removes its blocks from the store |
 
-When OpenCode is running in an opted-in project (has `.codebase-index`), the plugin starts a file watcher:
-
-| You do this           | Watcher does                                  |
-| --------------------- | --------------------------------------------- |
-| Save a `.ts` file     | Re-indexes that file only (old blocks removed) |
-| Create a new `.vue`   | Indexes the new file immediately              |
-| Delete a file         | Removes its blocks from Qdrant                |
-
-Changes are debounced (600ms) so rapid saves don't trigger multiple re-indexes. The watcher only covers opted-in projects and respects the same ignore patterns (node_modules, vendor, dist, etc.).
+No full re-index. No API waste. Just the delta.
 
 ### CLI Tool
 
-The project also includes a standalone CLI for scripting or CI:
-
 ```bash
-# Index a project
-node cli.mjs index ~/Sites/my-project
-
-# Search indexed code
-node cli.mjs search ~/Sites/my-project "how does authentication work"
-
-# Check index status
-node cli.mjs status ~/Sites/my-project
-
-# Delete an index for a project
-node cli.mjs clear ~/Sites/my-project
+node cli.mjs index ~/Sites/my-project    # Full index
+node cli.mjs search ~/Sites/my-project "auth flow"  # Search
+node cli.mjs status ~/Sites/my-project   # Stats
+node cli.mjs clear ~/Sites/my-project    # Delete index
 ```
-
-The CLI reads config from `~/.config/opencode/opencode.json` or from environment variables.
 
 ---
 
@@ -203,102 +120,62 @@ The CLI reads config from `~/.config/opencode/opencode.json` or from environment
 
 ### Indexing Pipeline
 
-1. **File Discovery** — Scans the project directory using glob, ignoring `node_modules`, `.git`, `dist`, `vendor`, etc.
-2. **Code Parsing** — Splits source files into code blocks (min 100 chars, max 1000 chars per block)
-3. **Embedding** — Sends code blocks in batches to the embedding API with 20K char truncation to stay within token limits
-4. **Storage** — Stores vectors in Qdrant with metadata (file path, line numbers, language)
+1. **File Discovery** — glob scan with `.gitignore` + `.opencodeignore` support
+2. **Tree-sitter AST Parsing** — extracts functions, classes, methods for TS/JS/Python/PHP; falls back to line-based chunking for other languages
+3. **Hash Check** — if `sha256(file)` matches stored hash, skip (unchanged)
+4. **Embedding** — batches of 20 code blocks → embedding API (20K char truncation for token limits)
+5. **Storage** — Qdrant with metadata (file path, line numbers, language, file hash)
 
 ### Search Pipeline
 
-1. **Query Embedding** — Converts the user's natural language query into a vector
-2. **Vector Search** — Finds the most similar code blocks using cosine similarity
-3. **Result Formatting** — Returns matching code blocks with file paths, line numbers, and similarity scores
+1. **Query Embedding** — natural language → vector
+2. **Cosine Similarity Search** — Qdrant returns closest matches
+3. **Result Formatting** — file paths, line numbers, similarity scores, code previews
 
-### Incremental Updates
+### Hash Caching
 
-Instead of full re-indexing on every change, the file watcher uses:
+On re-index, only changed files are processed:
 
-- `indexFile(filePath)` — parse single file → embed → delete old blocks → insert new ones
-- `deleteFile(filePath)` — remove all blocks for a deleted file from Qdrant
+```
+📖 Scanned 159/159 files — 157 unchanged, 2 updated
+✅ All 157 files unchanged — index is up to date
+```
 
-### What Gets Indexed
+Deleted files are detected and purged automatically. No stale blocks.
 
-| Included                          | Excluded                          |
-| --------------------------------- | --------------------------------- |
-| `.ts`, `.tsx`, `.js`, `.jsx`      | `node_modules/`                   |
-| `.mjs`, `.cjs`                    | `.git/`                           |
-| `.py`, `.rb`, `.go`, `.rs`        | `dist/`, `build/`                 |
-| `.php`, `.java`, `.kt`, `.swift`  | `.next/`, `vendor/`               |
-| `.css`, `.scss`, `.html`, `.vue`  | `__pycache__/`, `.venv/`          |
-| `.svelte`                         | `target/`                         |
-| `.md`, `.json`, `.yaml`, `.toml`  | `*.min.js`, `*.min.css`           |
-| `.sh`, `.bash`, `.zig`            | `*.map`                           |
-| `.c`, `.cpp`, `.h`, `.hpp`        | `package-lock.json`, `yarn.lock`  |
-|                                   | `pnpm-lock.yaml`                  |
+---
+
+## Configuration
+
+| Option | Default | Description |
+|---|---|---|
+| `embedder` | `"ollama"` | `"openai"` or `"ollama"` |
+| `model` | `"nomic-embed-text"` | Embedding model |
+| `openaiBaseUrl` | `"https://api.openai.com"` | OpenAI-compatible endpoint |
+| `openaiApiKey` | — | API key (required for openai) |
+| `ollamaUrl` | `"http://localhost:11434"` | Ollama server |
+| `vectorStore` | `"lancedb"` | `"qdrant"` or `"lancedb"` |
+| `qdrantUrl` | `"http://localhost:6333"` | Qdrant server |
+| `batchSize` | `20` | Embedding batch size |
+| `maxResults` | `20` | Max search results |
+| `minScore` | `0.4` | Similarity threshold |
+
+---
+
+## Supported Languages
+
+| Tree-sitter AST (semantic blocks) | Line-based (fallback) |
+|---|---|
+| TypeScript (.ts, .tsx) | Ruby, Go, Rust, Java, Kotlin |
+| JavaScript (.js, .jsx, .mjs, .cjs) | C, C++, Swift, Zig |
+| Python (.py) | CSS, SCSS, HTML, Vue, Svelte |
+| PHP (.php) | Markdown, JSON, YAML, TOML, Bash |
 
 ---
 
 ## Project Isolation
 
-Each project gets its own Qdrant collection named `idx_<hash>` (based on the project path's SHA-256). This ensures:
-
-- Indexes don't mix between projects
-- You can delete or re-index one project without affecting others
-- Multiple team members can index the same project independently
-
----
-
-## Search Priority Rule
-
-The plugin injects a system prompt that instructs the AI:
-
-> **Search Priority Rule** — When asked to find code, understand logic, or locate files — always try `codebase_search` first before using grep, glob, find, or reading files directly. `codebase_search` is faster, understands semantics, and finds cross-file patterns.
->
-> Only fall back to grep/glob/find if `codebase_search` returns no results or fails.
-
----
-
-## Troubleshooting
-
-### "Qdrant not available"
-
-```bash
-# Check if Qdrant is running
-curl http://localhost:6333/healthz
-
-# Start Qdrant
-docker start qdrant
-# or
-brew services start qdrant
-```
-
-### "Embedding API error"
-
-- Verify your API key is correct in `~/.config/opencode/opencode.json`
-- Check that the base URL is reachable
-- The engine truncates code blocks to 20K chars to stay within token limits
-
-### Plugin not showing tools in OpenCode
-
-```bash
-# Verify the plugin is installed
-opencode plugin list
-
-# Check the global config
-cat ~/.config/opencode/opencode.json | grep opencode-indexer
-```
-
-### Re-indexing a project
-
-Inside OpenCode, use `codebase_index` with `force=true`:
-
-> _"Run codebase_index with force=true to re-index"_
-
-Or from CLI:
-
-```bash
-node ~/opencode-indexer/cli.mjs index ~/Sites/my-project
-```
+Each project gets its own Qdrant collection (`idx_<sha256>`). Indexes never mix between projects.
 
 ---
 
@@ -306,15 +183,30 @@ node ~/opencode-indexer/cli.mjs index ~/Sites/my-project
 
 ```
 ~/opencode-indexer/
-├── cli.mjs           # CLI entry point (node cli.mjs index/search/status/clear)
+├── cli.mjs              # CLI (index, search, status, clear)
 ├── dist/
-│   ├── engine.js     # Core indexing engine (compiled)
-│   └── index.js      # OpenCode plugin (compiled)
+│   ├── engine.js        # Core: parser, embedder, vector store, hash cache
+│   ├── index.js         # Server plugin: 3 tools + watcher + system prompt
+│   └── tui.js           # TUI plugin: presence marker
 ├── src/
-│   ├── engine.ts     # Core: parse, embed, vector store, search, indexFile, deleteFile
-│   └── index.ts      # Plugin: 3 tools + file watcher + system prompt hook
-├── node_modules/
-│   └── chokidar      # File watcher (auto-indexing)
+│   ├── engine.ts        # Tree-sitter, hash caching, progress, Qdrant/LanceDB
+│   ├── index.ts         # Plugin entry: tools, chokidar watcher, priority rule
+│   └── tui.ts           # TUI entry (kv presence flag)
+├── banner.png           # Project banner
 ├── package.json
 └── tsconfig.json
 ```
+
+---
+
+## Troubleshooting
+
+**Qdrant not available:** `curl http://localhost:6333/healthz`
+
+**Embedding API error:** Check API key and base URL. Blocks truncated to 20K chars to stay within token limits.
+
+**Plugin not showing tools:** Restart OpenCode. Check `opencode plugin list`.
+
+**Too many blocks (noise):** The glob ignore fix ensures `node_modules`, `vendor`, etc. are excluded. If you have a stale index from before the fix, run `codebase_index(force=true)`.
+
+**Re-index a project:** `codebase_index(force=true)` in OpenCode, or `node cli.mjs index .` from CLI.
