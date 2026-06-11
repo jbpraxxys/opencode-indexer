@@ -1,7 +1,7 @@
-# Hermes Codebase Indexer
+# OpenCode Indexer
 
 <p align="center">
-  <img src="banner.png" alt="Hermes Codebase Indexer" width="600">
+  <img src="banner.png" alt="OpenCode Indexer" width="600">
 </p>
 
 **Semantic code search for OpenCode** — a plugin that indexes your project's source code into a vector database and enables the AI agent to search it using natural language. Tree-sitter AST parsing produces clean semantic blocks (functions, classes, methods). Hash caching skips unchanged files on re-index — fast incremental updates.
@@ -12,13 +12,13 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 
 ## What's New
 
-| Feature | Description |
-|---|---|
-| **Tree-sitter AST Parsing** | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP |
-| **Hash Caching** | SHA-256 per-file hashes — re-indexing only processes changed files |
-| **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore) |
-| **Progress File** | Real-time `.codebase-index-progress.json` during indexing (phase, percentage, counts) |
-| **Deleted File Detection** | Automatically removes orphaned blocks when files are deleted |
+| Feature                          | Description                                                                             |
+| -------------------------------- | --------------------------------------------------------------------------------------- |
+| **Tree-sitter AST Parsing**      | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP |
+| **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                      |
+| **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)  |
+| **Progress File**                | Real-time `.codebase-index-progress.json` during indexing (phase, percentage, counts)   |
+| **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                            |
 
 ---
 
@@ -85,11 +85,11 @@ Restart OpenCode.
 
 Three tools available to the AI agent:
 
-| Tool | What it does |
-|---|---|
-| `codebase_index` | Index the project (tree-sitter parsing + hash caching) |
-| `codebase_search` | Semantic search across indexed code |
-| `codebase_status` | Check index stats |
+| Tool              | What it does                                           |
+| ----------------- | ------------------------------------------------------ |
+| `codebase_index`  | Index the project (tree-sitter parsing + hash caching) |
+| `codebase_search` | Semantic search across indexed code                    |
+| `codebase_status` | Check index stats                                      |
 
 The agent follows a **Search Priority Rule**: always tries `codebase_search` first, falls back to grep/glob only if no results.
 
@@ -97,11 +97,11 @@ The agent follows a **Search Priority Rule**: always tries `codebase_search` fir
 
 When OpenCode runs in an opted-in project, the file watcher keeps the index fresh:
 
-| Action | Result |
-|---|---|
-| Save/edit a file | Re-indexes only that file (600ms debounce) |
-| Create a new file | Indexes immediately |
-| Delete a file | Removes its blocks from the store |
+| Action            | Result                                     |
+| ----------------- | ------------------------------------------ |
+| Save/edit a file  | Re-indexes only that file (600ms debounce) |
+| Create a new file | Indexes immediately                        |
+| Delete a file     | Removes its blocks from the store          |
 
 No full re-index. No API waste. Just the delta.
 
@@ -147,29 +147,29 @@ Deleted files are detected and purged automatically. No stale blocks.
 
 ## Configuration
 
-| Option | Default | Description |
-|---|---|---|
-| `embedder` | `"ollama"` | `"openai"` or `"ollama"` |
-| `model` | `"nomic-embed-text"` | Embedding model |
-| `openaiBaseUrl` | `"https://api.openai.com"` | OpenAI-compatible endpoint |
-| `openaiApiKey` | — | API key (required for openai) |
-| `ollamaUrl` | `"http://localhost:11434"` | Ollama server |
-| `vectorStore` | `"lancedb"` | `"qdrant"` or `"lancedb"` |
-| `qdrantUrl` | `"http://localhost:6333"` | Qdrant server |
-| `batchSize` | `20` | Embedding batch size |
-| `maxResults` | `20` | Max search results |
-| `minScore` | `0.4` | Similarity threshold |
+| Option          | Default                    | Description                   |
+| --------------- | -------------------------- | ----------------------------- |
+| `embedder`      | `"ollama"`                 | `"openai"` or `"ollama"`      |
+| `model`         | `"nomic-embed-text"`       | Embedding model               |
+| `openaiBaseUrl` | `"https://api.openai.com"` | OpenAI-compatible endpoint    |
+| `openaiApiKey`  | —                          | API key (required for openai) |
+| `ollamaUrl`     | `"http://localhost:11434"` | Ollama server                 |
+| `vectorStore`   | `"lancedb"`                | `"qdrant"` or `"lancedb"`     |
+| `qdrantUrl`     | `"http://localhost:6333"`  | Qdrant server                 |
+| `batchSize`     | `20`                       | Embedding batch size          |
+| `maxResults`    | `20`                       | Max search results            |
+| `minScore`      | `0.4`                      | Similarity threshold          |
 
 ---
 
 ## Supported Languages
 
-| Tree-sitter AST (semantic blocks) | Line-based (fallback) |
-|---|---|
-| TypeScript (.ts, .tsx) | Ruby, Go, Rust, Java, Kotlin |
-| JavaScript (.js, .jsx, .mjs, .cjs) | C, C++, Swift, Zig |
-| Python (.py) | CSS, SCSS, HTML, Vue, Svelte |
-| PHP (.php) | Markdown, JSON, YAML, TOML, Bash |
+| Tree-sitter AST (semantic blocks)  | Line-based (fallback)            |
+| ---------------------------------- | -------------------------------- |
+| TypeScript (.ts, .tsx)             | Ruby, Go, Rust, Java, Kotlin     |
+| JavaScript (.js, .jsx, .mjs, .cjs) | C, C++, Swift, Zig               |
+| Python (.py)                       | CSS, SCSS, HTML, Vue, Svelte     |
+| PHP (.php)                         | Markdown, JSON, YAML, TOML, Bash |
 
 ---
 
