@@ -274,3 +274,40 @@ Each project gets its own Qdrant collection (`idx_<sha256>`). Indexes never mix 
 **Too many blocks (noise):** The glob ignore fix ensures `node_modules`, `vendor`, etc. are excluded. If you have a stale index from before the fix, run `codebase_index(force=true)`.
 
 **Re-index a project:** `codebase_index(force=true)` in OpenCode, or `node cli.mjs index .` from CLI.
+
+### "Too many open files" in Qdrant (macOS binary)
+
+Running Qdrant directly on macOS may hit the file descriptor limit:
+
+```
+Os { code: 24, kind: Uncategorized, message: "Too many open files" }
+```
+
+**Check current limits:**
+
+```bash
+ulimit -n
+launchctl limit maxfiles
+```
+
+**Permanent fix (requires reboot):**
+
+```bash
+sudo launchctl config system maxfiles 65536 200000
+sudo launchctl config user   maxfiles 65536 200000
+```
+
+**Shell default (zsh):** Add to `~/.zshrc`:
+
+```bash
+ulimit -n 65536
+```
+
+**Quick test (session only):**
+
+```bash
+ulimit -n 65536
+./qdrant
+```
+
+After reboot, confirm with `ulimit -n` before launching Qdrant.
