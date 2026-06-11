@@ -121,7 +121,7 @@ Add to `~/.config/opencode/opencode.json`:
 
 ```json
 "plugin": [
-    ["/Users/jdbernardo/opencode-indexer", {
+    ["~/opencode-indexer", {
         "embedder": "openai",
         "openaiBaseUrl": "https://your-embedding-proxy.example.com/code",
         "openaiApiKey": "sk-...",
