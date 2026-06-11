@@ -9,9 +9,7 @@
     "strict": false,
     "skipLibCheck": true,
     "noImplicitAny": false,
-    "declaration": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/solid"
+    "declaration": true
   },
   "include": ["src"]
 }
