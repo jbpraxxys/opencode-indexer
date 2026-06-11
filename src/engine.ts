@@ -22,6 +22,7 @@ import { extname, relative, join } from "path"
 import { v5 as uuidv5 } from "uuid"
 import { glob } from "glob"
 import { Ollama } from "ollama"
+import ignore from "ignore"
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -96,6 +97,40 @@ function collectionName(workspaceRoot: string): string {
 
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex")
+}
+
+// ─── Project Ignore Rules ───────────────────────────────
+
+/**
+ * Load .gitignore + .opencodeignore from the project root and merge with
+ * the hardcoded ignore list. Returns an `ignore` instance that can test
+ * relative paths against all rules.
+ *
+ * Priority: hardcoded defaults → .gitignore → .opencodeignore (last wins)
+ */
+export function loadProjectIgnore(root: string): ReturnType<typeof ignore> {
+  const ig = ignore()
+
+  // Layer 1: hardcoded defaults
+  ig.add(IGNORE)
+
+  // Layer 2: .gitignore
+  const gitignorePath = join(root, ".gitignore")
+  if (existsSync(gitignorePath)) {
+    try {
+      ig.add(readFileSync(gitignorePath, "utf-8"))
+    } catch { /* unreadable — skip */ }
+  }
+
+  // Layer 3: .opencodeignore (same format as .gitignore, takes precedence)
+  const opencodeignorePath = join(root, ".opencodeignore")
+  if (existsSync(opencodeignorePath)) {
+    try {
+      ig.add(readFileSync(opencodeignorePath, "utf-8"))
+    } catch { /* unreadable — skip */ }
+  }
+
+  return ig
 }
 
 // ─── Embedder Interface ──────────────────────────────────
@@ -433,8 +468,10 @@ export class CodebaseIndexer {
     const log = onProgress || ((msg: string) => console.log(msg))
 
     log("🔍 Scanning files...")
+    const projectIgnore = loadProjectIgnore(workspaceRoot)
     const files = await glob("**/*", {
-      cwd: workspaceRoot, absolute: true, ignore: IGNORE, nodir: true,
+      cwd: workspaceRoot, absolute: true, nodir: true,
+      ignore: { ignored: (p) => projectIgnore.ignores(String(p)) },
     })
     const indexable = files.filter((f) => EXTENSIONS.has(extname(f)))
     log(`📄 Found ${indexable.length} indexable files (${files.length} total)`)

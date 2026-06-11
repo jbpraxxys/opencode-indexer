@@ -26,7 +26,7 @@ import { tool } from "@opencode-ai/plugin/tool"
 import type { PluginOptions, PluginInput } from "@opencode-ai/plugin"
 import { existsSync } from "fs"
 import { join, relative, extname } from "path"
-import { CodebaseIndexer, type IndexerConfig } from "./engine.js"
+import { CodebaseIndexer, loadProjectIgnore, type IndexerConfig } from "./engine.js"
 import chokidar from "chokidar"
 
 const z = tool.schema
@@ -308,33 +308,6 @@ const WATCH_EXTENSIONS = new Set([
   ".php", ".swift", ".zig",
 ])
 
-// ─── Watch ignore patterns (matches engine.ts IGNORE) ──────
-
-const WATCH_IGNORE = [
-  /[/\\]node_modules[/\\]/,
-  /[/\\]\.git[/\\]/,
-  /[/\\]dist[/\\]/,
-  /[/\\]build[/\\]/,
-  /[/\\]\.next[/\\]/,
-  /[/\\]vendor[/\\]/,
-  /[/\\]__pycache__[/\\]/,
-  /[/\\]\.venv[/\\]/,
-  /[/\\]target[/\\]/,
-  /\.min\.(js|css)$/,
-  /\.map$/,
-  /package-lock\.json$/,
-  /yarn\.lock$/,
-  /pnpm-lock\.yaml$/,
-]
-
-function isWatchable(filePath: string): boolean {
-  if (!WATCH_EXTENSIONS.has(extname(filePath))) return false
-  for (const re of WATCH_IGNORE) {
-    if (re.test(filePath)) return false
-  }
-  return true
-}
-
 // ─── Plugin Server ────────────────────────────────────────
 
 export const server = async (input: PluginInput, options: PluginOptions) => {
@@ -363,8 +336,13 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
   // Start file watcher if the project is opted in
   const projectDir = input.directory
   if (projectDir && hasMarker(projectDir)) {
+    const projectIgnore = loadProjectIgnore(projectDir)
     watcher = chokidar.watch(projectDir, {
-      ignored: (path: string) => !isWatchable(path),
+      ignored: (path: string) => {
+        if (!WATCH_EXTENSIONS.has(extname(path))) return true
+        const rel = relative(projectDir, path)
+        return projectIgnore.ignores(rel)
+      },
       persistent: true,
       ignoreInitial: true,
       depth: 20,
