@@ -381,7 +381,7 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
       }, DEBOUNCE_MS))
     })
 
-    console.log(`File watcher started for ${projectDir}`)
+    // Watcher started silently (no console.log — output goes to TUI textarea)
   }
 
   return {
