@@ -26,7 +26,7 @@ import { tool } from "@opencode-ai/plugin/tool"
 import type { PluginOptions, PluginInput } from "@opencode-ai/plugin"
 import { existsSync } from "fs"
 import { join, relative, extname } from "path"
-import { CodebaseIndexer, loadProjectIgnore, type IndexerConfig } from "./engine.js"
+import { CodebaseIndexer, loadProjectIgnore, type IndexerConfig, getCurrentBranch, getStoredBranch, setStoredBranch } from "./engine.js"
 import chokidar from "chokidar"
 
 const z = tool.schema
@@ -384,6 +384,32 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
     // Watcher started silently (no console.log — output goes to TUI textarea)
   }
 
+  // ─── Branch polling (opt-in via branchAware config) ──────
+  let branchInterval: ReturnType<typeof setInterval> | null = null
+  if (projectDir && hasMarker(projectDir) && pluginConfig.branchAware) {
+    let lastBranch = getCurrentBranch(projectDir)
+
+    branchInterval = setInterval(async () => {
+      try {
+        const current = getCurrentBranch(projectDir)
+        if (!current || current === lastBranch) return
+
+        // Branch change detected — full re-index with hash caching
+        const idx = getIndexer(projectDir, pluginConfig)
+        await idx.ensureReady()
+        await idx.init()
+
+        // Store the new branch BEFORE indexing so the marker is correct
+        // even if indexing fails partway through (next run fixes it)
+        lastBranch = current
+
+        const result = await idx.index(projectDir)
+      } catch (err: any) {
+        // Best-effort — log and retry next poll
+      }
+    }, 3000) // poll every 3 seconds
+  }
+
   return {
     tool: {
       codebase_index: makeCodebaseIndex(pluginConfig),
@@ -408,13 +434,20 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         "Do not use both — try search first, then fall back if needed.\n\n" +
         "For projects with a `.codebase-index` file, indexing happens automatically on first tool use. " +
         "The file watcher keeps the index fresh as you edit code. " +
-        "Re-indexing is fast — hash caching only reprocesses changed files."
+        "Re-indexing is fast — hash caching only reprocesses changed files. " +
+        (pluginConfig.branchAware
+          ? "**Branch-aware indexing is enabled** — the index auto-updates when you switch git branches. "
+          : "")
       )
     },
     dispose: async () => {
       if (watcher) {
         await watcher.close()
         console.log("File watcher stopped")
+      }
+      if (branchInterval) {
+        clearInterval(branchInterval)
+        branchInterval = null
       }
       // Clear all debounce timers
       for (const timer of Array.from(debounceTimers.values())) {

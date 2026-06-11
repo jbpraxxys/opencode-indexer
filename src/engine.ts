@@ -24,6 +24,7 @@ import { v5 as uuidv5 } from "uuid"
 import { glob } from "glob"
 import { Ollama } from "ollama"
 import ignore from "ignore"
+import { execSync } from "child_process"
 import type { Parser as TreeSitterParserType, Language as TreeSitterLangType } from "web-tree-sitter"
 
 // Lazy-loaded tree-sitter — only imported when a supported language is encountered
@@ -57,6 +58,8 @@ export interface IndexerConfig {
   minScore?: number
   batchSize?: number
   maxFileSize?: number
+  /** Enable branch-aware indexing — polls .git/HEAD and re-indexes on branch change */
+  branchAware?: boolean
 }
 
 export interface SearchResult {
@@ -92,6 +95,7 @@ const IGNORE = [
   "**/target/**", "**/*.min.js", "**/*.min.css", "**/*.map",
   "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml",
   "**/.codebase-index/**", ".codebase-index-progress.json",
+  ".codebase-index-branch",
 ]
 
 const EXTENSIONS = new Set([
@@ -299,6 +303,44 @@ export function loadProjectIgnore(root: string): ReturnType<typeof ignore> {
 // ─── Progress File ──────────────────────────────────────
 
 const PROGRESS_FILE = ".codebase-index-progress.json"
+const BRANCH_FILE = ".codebase-index-branch"
+
+/**
+ * Read the current git branch from .git/HEAD.
+ * Returns null if not in a git repo or HEAD is detached.
+ */
+export function getCurrentBranch(root: string): string | null {
+  try {
+    const head = execSync("git rev-parse --abbrev-ref HEAD", {
+      cwd: root,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+    }).trim()
+    if (!head || head === "HEAD") return null // detached HEAD
+    return head
+  } catch {
+    return null
+  }
+}
+
+/** Read the branch name stored from the last index */
+export function getStoredBranch(root: string): string | null {
+  try {
+    const path = join(root, BRANCH_FILE)
+    if (!existsSync(path)) return null
+    return readFileSync(path, "utf-8").trim()
+  } catch {
+    return null
+  }
+}
+
+/** Store the current branch name after indexing */
+export function setStoredBranch(root: string, branch: string): void {
+  try {
+    writeFileSync(join(root, BRANCH_FILE), branch + "\n", "utf-8")
+  } catch { /* best-effort */ }
+}
 
 /**
  * Write indexing progress state to a JSON file at the project root.
@@ -685,6 +727,7 @@ export class CodebaseIndexer {
   private store: VectorStore | null = null
   private qdrantUrl: string
   private qdrantApiKey?: string
+  branchAware: boolean
 
   constructor(workspaceRoot: string, config: IndexerConfig = {}) {
     this.workspaceRoot = workspaceRoot
@@ -692,6 +735,7 @@ export class CodebaseIndexer {
     this.storeType = config.vectorStore ?? "lancedb"
     this.qdrantUrl = config.qdrantUrl ?? "http://localhost:6333"
     this.qdrantApiKey = config.qdrantApiKey
+    this.branchAware = config.branchAware ?? false
 
     const embedderType = config.embedder ?? "ollama"
     const model = config.model ?? "nomic-embed-text"
@@ -897,6 +941,13 @@ export class CodebaseIndexer {
     const doneMsg = `✅ Done — ${indexable.length} files scanned: ${skippedCount} unchanged, ${parsedCount} updated → ${totalBlocks} blocks total`
     log(doneMsg)
     progress({ phase: "done", message: doneMsg, current: totalBlocks, total: totalBlocks, percentage: 100, updatedAt: "" })
+
+    // Track branch if branchAware is enabled
+    if (this.branchAware) {
+      const branch = getCurrentBranch(this.workspaceRoot)
+      if (branch) setStoredBranch(this.workspaceRoot, branch)
+    }
+
     return { files: indexable.length, blocks: totalBlocks, skipped: skippedCount }
   }
 
