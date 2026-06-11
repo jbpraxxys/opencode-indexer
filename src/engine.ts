@@ -745,12 +745,18 @@ export class CodebaseIndexer {
     progress({ phase: "scanning", message: "Scanning files...", current: 0, total: 0, percentage: 0, updatedAt: "" })
     log("🔍 Scanning files...")
     const projectIgnore = loadProjectIgnore(workspaceRoot)
+
+    // glob v11 IGNORES function-based ignore callbacks (the { ignored: fn } form is
+    // silently discarded). Pass string patterns for fast native filtering, then
+    // post-filter with the full ignore rules for .gitignore/.opencodeignore support.
     const files = await glob("**/*", {
       cwd: workspaceRoot, absolute: true, nodir: true,
-      ignore: { ignored: (p) => projectIgnore.ignores(String(p)) },
+      ignore: IGNORE, // string patterns — glob handles these natively
     })
-    const indexable = files.filter((f) => EXTENSIONS.has(extname(f)))
-    log(`📄 Found ${indexable.length} indexable files (${files.length} total)`)
+    // Post-filter: apply full ignore rules (includes .gitignore + .opencodeignore)
+    const filtered = files.filter((f) => !projectIgnore.ignores(relative(workspaceRoot, f)))
+    const indexable = filtered.filter((f) => EXTENSIONS.has(extname(f)))
+    log(`📄 Found ${indexable.length} indexable files (${filtered.length} source, ${files.length} total)`)
 
     if (indexable.length === 0) {
       log("⚠ No indexable files found — nothing to do")
