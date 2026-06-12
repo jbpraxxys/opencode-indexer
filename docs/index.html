@@ -90,9 +90,9 @@
     }
     @keyframes matrixFall {
       0%   { transform: translateY(-100%); opacity: 0; }
-      10%  { opacity: 1; }
-      90%  { opacity: 1; }
-      100% { transform: translateY(110vh); opacity: 0; }
+      3%   { opacity: 1; }
+      97%  { opacity: 1; }
+      100% { transform: translateY(250vh); opacity: 0; }
     }
 
     /* ── Hero Glow ─────────────────────────────────── */
@@ -639,12 +639,12 @@
     (function() {
       const el = document.getElementById("matrix");
       const chars = "アイウエオカキクケコサシスセソタチツテトabcdefghijklmnopqrstuvwxyz0123456789<>/{}[]|&^%$#@!?;:.,+=-_*";
-      const cols = Math.floor(window.innerWidth / 18);
+      const cols = Math.floor(window.innerWidth / 16);
       for (let i = 0; i < cols; i++) {
         const col = document.createElement("div");
         col.className = "matrix-column";
-        col.style.left = (i * 24) + "px";
-        col.style.animationDuration = (8 + Math.random() * 14) + "s";
+        col.style.left = (i * 16) + "px";
+        col.style.animationDuration = (12 + Math.random() * 20) + "s";
         col.style.animationDelay = Math.random() * 10 + "s";
         col.style.fontSize = (12 + Math.random() * 8) + "px";
         const len = 8 + Math.floor(Math.random() * 20);
