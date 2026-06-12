@@ -3,257 +3,686 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OpenCode Indexer — Semantic Code Search</title>
-  <meta name="description" content="Semantic code search plugin for OpenCode. Indexes your project source code into a vector database using tree-sitter AST parsing. Natural language search instead of regex.">
+  <title>opencode-indexer — Semantic Code Search</title>
+  <meta name="description" content="Semantic code search plugin for OpenCode. Tree-sitter AST indexing with LanceDB vector store. Ask 'how does auth work?' instead of grepping.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
   <style>
+    /* ── Reset & Vars ────────────────────────────── */
     :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --text: #e6edf3;
-      --muted: #8b949e;
-      --accent: #58a6ff;
-      --green: #3fb950;
-      --orange: #d2991d;
+      --bg: #000;
+      --surface: #0a0f0a;
+      --border: #1a2a1a;
+      --text: #c0ffc0;
+      --green: #00ff41;
+      --green-dim: #008f22;
+      --magenta: #ff00ff;
+      --magenta-dim: #9f009f;
+      --amber: #ffb000;
+      --amber-dim: #8f6000;
+      --scanline: rgba(0,0,0,0.08);
+      --glow-soft: 0 0 10px rgba(0,255,65,0.15);
+      --glow-strong: 0 0 25px rgba(0,255,65,0.25);
+      --font: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; background: #000; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-      background: var(--bg); color: var(--text); line-height: 1.6;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      overflow-x: hidden;
+      position: relative;
     }
-    .container { max-width: 880px; margin: 0 auto; padding: 0 24px; }
 
-    /* Hero */
-    .hero { text-align: center; padding: 80px 0 48px; }
-    .hero img { max-width: 600px; width: 100%; border-radius: 12px; margin-bottom: 32px; }
-    .hero h1 { font-size: 2.4rem; font-weight: 700; margin-bottom: 12px; }
-    .hero p { font-size: 1.15rem; color: var(--muted); max-width: 600px; margin: 0 auto 32px; }
-    .hero .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    /* ── Scanline Overlay ─────────────────────────── */
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        var(--scanline) 2px,
+        var(--scanline) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.4;
+    }
+
+    /* ── CRT Vignette ─────────────────────────────── */
+    .crt-vignette {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.65) 100%);
+      pointer-events: none;
+      z-index: 9998;
+    }
+
+    /* ── Matrix Rain ──────────────────────────────── */
+    .matrix-rain {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.06;
+      overflow: hidden;
+    }
+    .matrix-column {
+      position: absolute;
+      top: -100%;
+      animation: matrixFall linear infinite;
+      color: var(--green);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1;
+      white-space: nowrap;
+      opacity: 0;
+      text-shadow: 0 0 5px var(--green);
+    }
+    @keyframes matrixFall {
+      0%   { transform: translateY(-100%); opacity: 0; }
+      10%  { opacity: 1; }
+      90%  { opacity: 1; }
+      100% { transform: translateY(110vh); opacity: 0; }
+    }
+
+    /* ── Layout ──────────────────────────────────── */
+    .container { max-width: 960px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 2; }
+    section { padding: 72px 0; position: relative; }
+
+    /* ── Nav Dots ─────────────────────────────────── */
+    .nav-dots {
+      position: fixed; right: 24px; top: 50%; transform: translateY(-50%);
+      z-index: 9997; display: flex; flex-direction: column; gap: 16px;
+    }
+    .nav-dot {
+      width: 8px; height: 8px; border: 1px solid var(--green-dim);
+      border-radius: 50%; background: transparent; cursor: pointer;
+      transition: all .25s;
+    }
+    .nav-dot:hover, .nav-dot.active {
+      background: var(--green); border-color: var(--green);
+      box-shadow: 0 0 10px var(--green);
+    }
+
+    /* ── Typography ───────────────────────────────── */
+    h1, h2, h3 { font-weight: 700; color: var(--green); }
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.35rem; margin-bottom: 28px; display: flex; align-items: center; gap: 12px; }
+    h2::before { content: ">"; color: var(--magenta); font-weight: 400; }
+    h3 { font-size: 1rem; }
+
+    /* ── Terminal Window ──────────────────────────── */
+    .term-window {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: var(--glow-soft);
+      transition: box-shadow .3s;
+    }
+    .term-window:hover { box-shadow: var(--glow-strong); }
+    .term-titlebar {
+      background: #0d140d;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: .75rem;
+      color: var(--green-dim);
+    }
+    .term-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+    }
+    .term-dot.close { background: var(--magenta); box-shadow: 0 0 6px var(--magenta-dim); }
+    .term-dot.minimize { background: var(--amber-dim); }
+    .term-dot.maximize { background: var(--green-dim); }
+    .term-body { padding: 20px 22px; }
+
+    /* ── Hero ─────────────────────────────────────── */
+    .hero {
+      min-height: 85vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 100px 0 60px;
+      position: relative;
+    }
+    .hero-frame {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 44px 40px;
+      max-width: 700px;
+      width: 100%;
+      box-shadow: 0 0 40px rgba(0,255,65,0.08);
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-frame::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--green), var(--magenta), transparent);
+    }
+    .hero-prompt { font-size: .9rem; color: var(--green-dim); margin-bottom: 8px; }
+    .hero-cmd {
+      font-size: 1.05rem;
+      color: var(--green);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      min-height: 36px;
+    }
+    .hero-cursor {
+      display: inline-block;
+      width: 10px; height: 20px;
+      background: var(--green);
+      animation: blink 1s step-end infinite;
+      box-shadow: 0 0 8px var(--green);
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    .hero-desc {
+      margin-top: 18px;
+      font-size: .9rem;
+      color: var(--amber);
+      min-height: 24px;
+    }
+    .hero-tagline {
+      margin-top: 24px;
+      font-size: .82rem;
+      color: var(--green-dim);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+    }
+    .hero-tagline .cursor {
+      display: inline-block;
+      width: 8px; height: 16px;
+      background: var(--green-dim);
+      animation: blink 1s step-end infinite;
+    }
+    .glitch {
+      position: relative;
+      animation: glitch-skew 4s infinite linear alternate-reverse;
+    }
+    @keyframes glitch-skew {
+      0% { transform: skew(0deg); }
+      15% { transform: skew(0deg); }
+      16% { transform: skew(1deg, 0.5deg); }
+      17% { transform: skew(-0.5deg, -0.2deg); }
+      18% { transform: skew(0deg); }
+      100% { transform: skew(0deg); }
+    }
+
+    /* Hero CTAs */
+    .hero-ctas {
+      margin-top: 28px;
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
     .btn {
-      display: inline-block; padding: 10px 24px; border-radius: 8px; font-size: .95rem;
-      font-weight: 600; text-decoration: none; transition: opacity .15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 28px;
+      border-radius: 4px;
+      font-family: var(--font);
+      font-size: .85rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all .2s;
+      border: 1px solid var(--green);
+      background: transparent;
+      color: var(--green);
+      text-shadow: 0 0 6px var(--green);
+      box-shadow: 0 0 12px rgba(0,255,65,0.1);
     }
-    .btn:hover { opacity: .85; }
-    .btn-primary { background: #238636; color: #fff; border: 1px solid rgba(240,246,252,.1); }
-    .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-
-    /* Sections */
-    section { padding: 56px 0; }
-    section + section { border-top: 1px solid var(--border); }
-    h2 { font-size: 1.5rem; margin-bottom: 16px; }
-    h3 { font-size: 1.15rem; margin-bottom: 8px; color: var(--accent); }
-
-    /* Features */
-    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
-    .feature {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 10px; padding: 20px;
+    .btn:hover {
+      background: rgba(0,255,65,0.08);
+      box-shadow: 0 0 25px rgba(0,255,65,0.3);
+      transform: translateY(-1px);
     }
-    .feature-icon { font-size: 1.5rem; margin-bottom: 8px; }
-    .feature h4 { font-size: .95rem; margin-bottom: 6px; }
-    .feature p { font-size: .88rem; color: var(--muted); }
-
-    /* Code blocks */
-    pre {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; padding: 16px 20px; overflow-x: auto;
-      font-size: .85rem; line-height: 1.55; margin: 12px 0;
+    .btn-magenta {
+      border-color: var(--magenta);
+      color: var(--magenta);
+      text-shadow: 0 0 6px var(--magenta);
+      box-shadow: 0 0 12px rgba(255,0,255,0.1);
     }
-    code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
-
-    /* Steps */
-    .steps { display: flex; flex-direction: column; gap: 16px; }
-    .step {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 10px; padding: 16px 20px;
+    .btn-magenta:hover {
+      background: rgba(255,0,255,0.08);
+      box-shadow: 0 0 25px rgba(255,0,255,0.3);
     }
-    .step-num { color: var(--accent); font-weight: 700; font-size: .8rem; margin-bottom: 4px; }
-    .step code { font-size: .82rem; }
 
-    /* Table */
-    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .9rem; }
-    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-weight: 600; }
-    td:first-child code { white-space: nowrap; }
+    /* ── Features Grid ────────────────────────────── */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 22px;
+    }
+    .feature-card .term-body h3 {
+      font-size: .88rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--green);
+    }
+    .feature-card .term-body p {
+      font-size: .8rem;
+      color: var(--amber);
+      line-height: 1.6;
+      margin-bottom: 10px;
+    }
+    .feature-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .feature-tag {
+      font-size: .7rem;
+      padding: 3px 8px;
+      border: 1px solid var(--green-dim);
+      border-radius: 3px;
+      color: var(--green);
+    }
+    .feature-progress {
+      margin-top: 14px;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .feature-progress-bar {
+      height: 100%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      border-radius: 2px;
+    }
 
-    /* Footer */
-    footer { border-top: 1px solid var(--border); padding: 32px 0; text-align: center; color: var(--muted); font-size: .85rem; }
-    footer a { color: var(--accent); text-decoration: none; }
+    /* ── Install ──────────────────────────────────── */
+    .install-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+    }
+    .term-line {
+      font-size: .8rem;
+      padding: 4px 0;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .term-line .prompt { color: var(--green); white-space: nowrap; }
+    .term-line .comment { color: #446644; }
+    .term-line .output { color: var(--amber); }
+    .term-line .success { color: var(--green); }
+    .term-line .indent { padding-left: 20px; }
+
+    /* ── Table ────────────────────────────────────── */
+    .term-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .8rem;
+    }
+    .term-table th, .term-table td {
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .term-table th { color: var(--green-dim); font-weight: 600; text-transform: uppercase; font-size: .72rem; }
+    .term-table td code { color: var(--green); }
+    .term-table tr:hover td { background: rgba(0,255,65,0.03); }
+
+    /* ── Divider ──────────────────────────────────── */
+    .section-divider {
+      text-align: center;
+      padding: 12px 0;
+      color: var(--green-dim);
+      font-size: .75rem;
+      letter-spacing: 4px;
+    }
+
+    /* ── Footer ───────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      text-align: center;
+      font-size: .78rem;
+      color: var(--green-dim);
+      position: relative;
+      z-index: 2;
+    }
+    footer a {
+      color: var(--green);
+      text-decoration: none;
+      text-shadow: 0 0 6px var(--green);
+    }
     footer a:hover { text-decoration: underline; }
+    .footer-exit {
+      margin-top: 12px;
+      color: var(--amber);
+    }
+
+    /* ── Responsive ───────────────────────────────── */
+    @media (max-width: 768px) {
+      .container { padding: 0 16px; }
+      section { padding: 48px 0; }
+      .hero-frame { padding: 28px 20px; }
+      h1 { font-size: 1.4rem; }
+      .install-grid { grid-template-columns: 1fr; }
+      .nav-dots { display: none; }
+      .hero { min-height: 70vh; }
+    }
+
+    /* ── Section fade-in ──────────────────────────── */
+    .section-hidden { opacity: 0; transform: translateY(20px); }
+    .section-visible { opacity: 1; transform: translateY(0); transition: opacity .6s, transform .6s; }
   </style>
 </head>
 <body>
 
-<!-- Hero -->
-<div class="hero">
-  <img src="https://raw.githubusercontent.com/jbpraxxys/opencode-indexer/main/banner.png" alt="OpenCode Indexer">
-  <h1>Semantic Code Search for OpenCode</h1>
-  <p>Ask &ldquo;how does authentication work?&rdquo; instead of grepping for <code>validateToken</code>. Your AI agent finds relevant code across your entire project — instantly.</p>
-  <div class="cta">
-    <a href="https://github.com/jbpraxxys/opencode-indexer" class="btn btn-primary">View on GitHub</a>
-    <a href="#quick-start" class="btn btn-secondary">Quick Start</a>
-  </div>
-</div>
+  <div class="crt-vignette"></div>
+  <div class="matrix-rain" id="matrix"></div>
 
-<!-- Features -->
-<section>
-  <div class="container">
-    <h2>Features</h2>
-    <div class="features">
-      <div class="feature">
-        <div class="feature-icon">🌳</div>
-        <h4>Tree-sitter AST Parsing</h4>
-        <p>Extracts functions, classes, and methods as clean semantic blocks. Supports TypeScript, JavaScript, Python, and PHP.</p>
-      </div>
-      <div class="feature">
-        <div class="feature-icon">⚡</div>
-        <h4>Hash Caching</h4>
-        <p>SHA-256 per-file hashes. Re-indexing only processes changed files. &ldquo;157 unchanged, 2 updated&rdquo; is the norm.</p>
-      </div>
-      <div class="feature">
-        <div class="feature-icon">🔍</div>
-        <h4>Natural Language Search</h4>
-        <p>Describe what you&rsquo;re looking for in plain English. Cosine similarity returns the closest matches across your entire codebase.</p>
-      </div>
-      <div class="feature">
-        <div class="feature-icon">📦</div>
-        <h4>Zero-Dependency LanceDB</h4>
-        <p>Embedded vector store — no server, no Docker, no API key. Just works. Qdrant available for team deployments.</p>
-      </div>
-      <div class="feature">
-        <div class="feature-icon">👀</div>
-        <h4>File Watcher</h4>
-        <p>Chokidar keeps the index fresh as you edit. Save a file → re-indexed in 600ms. Delete a file → blocks purged automatically.</p>
-      </div>
-      <div class="feature">
-        <div class="feature-icon">🔄</div>
-        <h4>Branch-Aware</h4>
-        <p>Opt-in branch polling. Switch branches → auto re-index with hash caching. No stale blocks from the wrong branch.</p>
+  <!-- Nav Dots -->
+  <div class="nav-dots" id="navDots">
+    <a href="#home" class="nav-dot active" title="Home"></a>
+    <a href="#features" class="nav-dot" title="Features"></a>
+    <a href="#languages" class="nav-dot" title="Languages"></a>
+    <a href="#install" class="nav-dot" title="Install"></a>
+    <a href="#cli" class="nav-dot" title="CLI"></a>
+  </div>
+
+  <!-- ═══ HERO ═══════════════════════════════════════ -->
+  <section class="hero" id="home">
+    <div class="container" style="display:flex;justify-content:center;">
+      <div class="hero-frame">
+        <div class="hero-prompt">guest@opencode:~$</div>
+        <div class="hero-cmd" id="typeTarget">
+          <span id="typeText"></span><span class="hero-cursor"></span>
+        </div>
+        <div class="hero-desc" id="heroDesc"></div>
+        <div class="hero-tagline">
+          <span>Ask "how does auth work?"</span><span class="cursor"></span>
+        </div>
+        <div class="hero-ctas">
+          <a href="#install" class="btn">[<span style="color:var(--green)">▮</span>] INSTALL</a>
+          <a href="https://github.com/jbpraxxys/opencode-indexer" class="btn btn-magenta">[<span style="color:var(--magenta)">▮</span>] GITHUB</a>
+        </div>
       </div>
     </div>
-  </div>
-</section>
+    <div class="section-divider glitch">══════════════════════════════════════</div>
+  </section>
 
-<!-- Supported Languages -->
-<section>
-  <div class="container">
-    <h2>Supported Languages</h2>
-    <table>
-      <thead><tr><th>Tree-sitter AST (semantic blocks)</th><th>Line-based (fallback)</th></tr></thead>
-      <tbody>
-        <tr><td>TypeScript (.ts, .tsx)</td><td>Ruby, Go, Rust, Java, Kotlin</td></tr>
-        <tr><td>JavaScript (.js, .jsx, .mjs, .cjs)</td><td>C, C++, Swift, Zig</td></tr>
-        <tr><td>Python (.py)</td><td>CSS, SCSS, HTML, Vue, Svelte</td></tr>
-        <tr><td>PHP (.php)</td><td>Markdown, JSON, YAML, TOML, Bash</td></tr>
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<!-- Install -->
-<section>
-  <div class="container">
-    <h2>Install</h2>
-    <pre><code>git clone https://github.com/jbpraxxys/opencode-indexer.git ~/opencode-indexer
-cd ~/opencode-indexer
-npm install
-npm run build</code></pre>
-    <p style="margin-top:16px;">Then add to <code>~/.config/opencode/opencode.json</code>:</p>
-    <pre><code>"plugin": [
-    ["~/opencode-indexer", {
-        "embedder": "openai",
-        "openaiApiKey": "sk-...",
-        "model": "text-embedding-3-small"
-    }]
-]</code></pre>
-  </div>
-</section>
-
-<!-- Quick Start -->
-<section id="quick-start">
-  <div class="container">
-    <h2>Quick Start</h2>
-    <div class="steps">
-      <div class="step">
-        <div class="step-num">STEP 1</div>
-        <p>Opt in your project: <code>touch .codebase-index</code> in the project root</p>
-      </div>
-      <div class="step">
-        <div class="step-num">STEP 2</div>
-        <p>Restart OpenCode in your project</p>
-      </div>
-      <div class="step">
-        <div class="step-num">STEP 3</div>
-        <p>Install the agent skill (strongly recommended):</p>
-        <pre><code>mkdir -p ~/.config/opencode/skills/opencode-indexer
-cp skills/opencode-indexer/SKILL.md ~/.config/opencode/skills/opencode-indexer/</code></pre>
-      </div>
-      <div class="step">
-        <div class="step-num">STEP 4</div>
-        <p>Ask your agent a natural language question:</p>
-        <pre><code>codebase_search "how does user login work"</code></pre>
-        <p style="color:var(--muted); font-size:.88rem; margin-top:8px;">Auto-indexing kicks in on the first search — no manual <code>codebase_index</code> call needed.</p>
+  <!-- ═══ FEATURES ═══════════════════════════════════ -->
+  <section id="features">
+    <div class="container">
+      <h2>features --list</h2>
+      <div class="features">
+        <div class="feature-card term-window">
+          <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> tree-sitter --parse</div>
+          <div class="term-body">
+            <h3>$ tree-sitter --parse</h3>
+            <p>Extracts functions, classes, and methods as clean semantic blocks. Understands structure, not just text.</p>
+            <div class="feature-tags"><span class="feature-tag">TypeScript</span><span class="feature-tag">JavaScript</span><span class="feature-tag">Python</span><span class="feature-tag">PHP</span></div>
+            <div class="feature-progress"><div class="feature-progress-bar" style="width:100%"></div></div>
+          </div>
+        </div>
+        <div class="feature-card term-window">
+          <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> sha256 --cache</div>
+          <div class="term-body">
+            <h3>$ sha256 --cache</h3>
+            <p>Re-indexing only processes changed files. "157 unchanged, 2 updated" is the norm. No API waste.</p>
+            <div class="feature-tags"><span class="feature-tag">hash</span><span class="feature-tag">incremental</span></div>
+            <div class="feature-progress"><div class="feature-progress-bar" style="width:92%"></div></div>
+          </div>
+        </div>
+        <div class="feature-card term-window">
+          <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> ./search "query"</div>
+          <div class="term-body">
+            <h3>$ ./search "auth flow"</h3>
+            <p>Describe what you&rsquo;re looking for in plain English. Cosine similarity finds the closest matches across your entire codebase.</p>
+            <div class="feature-tags"><span class="feature-tag">cosine</span><span class="feature-tag">vector</span></div>
+            <div class="feature-progress"><div class="feature-progress-bar" style="width:88%"></div></div>
+          </div>
+        </div>
+        <div class="feature-card term-window">
+          <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> lancedb --init</div>
+          <div class="term-body">
+            <h3>$ lancedb --init</h3>
+            <p>Embedded vector store — no server, no Docker, no API key. Just works. Qdrant available for team deployments.</p>
+            <div class="feature-tags"><span class="feature-tag">zero-deps</span><span class="feature-tag">embedded</span></div>
+            <div class="feature-progress"><div class="feature-progress-bar" style="width:85%"></div></div>
+          </div>
+        </div>
+        <div class="feature-card term-window">
+          <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> chokidar --watch</div>
+          <div class="term-body">
+            <h3>$ chokidar --watch</h3>
+            <p>Keeps the index fresh as you edit. Save a file → re-indexed in 600ms. Delete → blocks purged automatically.</p>
+            <div class="feature-tags"><span class="feature-tag">live</span><span class="feature-tag">debounce</span></div>
+            <div class="feature-progress"><div class="feature-progress-bar" style="width:78%"></div></div>
+          </div>
+        </div>
+        <div class="feature-card term-window">
+          <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> git --branch-aware</div>
+          <div class="term-body">
+            <h3>$ git --branch-aware</h3>
+            <p>Opt-in branch polling. Switch branches → auto re-index with hash caching. No stale blocks from the wrong branch.</p>
+            <div class="feature-tags"><span class="feature-tag">opt-in</span><span class="feature-tag">polling</span></div>
+            <div class="feature-progress"><div class="feature-progress-bar" style="width:70%"></div></div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- Configuration -->
-<section>
-  <div class="container">
-    <h2>Configuration</h2>
-    <table>
-      <thead><tr><th>Option</th><th>Default</th><th>Description</th></tr></thead>
-      <tbody>
-        <tr><td><code>embedder</code></td><td><code>"ollama"</code></td><td><code>"openai"</code> or <code>"ollama"</code></td></tr>
-        <tr><td><code>model</code></td><td><code>"nomic-embed-text"</code></td><td>Embedding model name</td></tr>
-        <tr><td><code>vectorStore</code></td><td><code>"lancedb"</code></td><td><code>"qdrant"</code> or <code>"lancedb"</code></td></tr>
-        <tr><td><code>batchSize</code></td><td><code>20</code></td><td>Embedding batch size</td></tr>
-        <tr><td><code>maxResults</code></td><td><code>20</code></td><td>Max search results</td></tr>
-        <tr><td><code>branchAware</code></td><td><code>false</code></td><td>Auto re-index on git branch switch</td></tr>
-      </tbody>
-    </table>
-  </div>
-</section>
+  <!-- ═══ LANGUAGES ═════════════════════════════════ -->
+  <section id="languages">
+    <div class="container">
+      <h2>languages --supported</h2>
+      <div class="term-window">
+        <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> parser --list</div>
+        <div class="term-body">
+          <table class="term-table">
+            <thead>
+              <tr><th>Tree-sitter AST (semantic blocks)</th><th>Line-based (fallback)</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>TypeScript</code> (.ts, .tsx)</td><td>Ruby, Go, Rust, Java, Kotlin</td></tr>
+              <tr><td><code>JavaScript</code> (.js, .jsx, .mjs, .cjs)</td><td>C, C++, Swift, Zig</td></tr>
+              <tr><td><code>Python</code> (.py)</td><td>CSS, SCSS, HTML, Vue, Svelte</td></tr>
+              <tr><td><code>PHP</code> (.php)</td><td>Markdown, JSON, YAML, TOML, Bash</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
 
-<!-- Three Tools -->
-<section>
-  <div class="container">
-    <h2>Three Tools</h2>
-    <table>
-      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
-      <tbody>
-        <tr><td><code>codebase_index</code></td><td>Index the project (tree-sitter parsing + hash caching)</td></tr>
-        <tr><td><code>codebase_search</code></td><td>Semantic search across indexed code</td></tr>
-        <tr><td><code>codebase_status</code></td><td>Check index stats and project opt-in</td></tr>
-      </tbody>
-    </table>
-    <p style="color:var(--muted); font-size:.88rem; margin-top:12px;">The agent follows a <strong>Search Priority Rule</strong>: checks <code>codebase_status</code> first (free, no API call), then uses <code>codebase_search</code> for all code search. Falls back to grep/glob only as a last resort.</p>
-  </div>
-</section>
+  <!-- ═══ INSTALL ════════════════════════════════════ -->
+  <section id="install">
+    <div class="container">
+      <h2>install --global</h2>
+      <div class="install-grid">
+        <div class="term-window">
+          <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> install.sh</div>
+          <div class="term-body">
+            <div class="term-line"><span class="prompt">$</span><span>git clone https://github.com/jbpraxxys/opencode-indexer.git ~/opencode-indexer</span></div>
+            <div class="term-line"><span class="prompt">$</span><span>cd ~/opencode-indexer</span></div>
+            <div class="term-line"><span class="prompt">$</span><span>npm install</span></div>
+            <div class="term-line"><span class="prompt">$</span><span>npm run build</span></div>
+            <div class="term-line" style="margin-top:12px;"><span class="output">✓ 3 packages installed in 4.2s</span></div>
+            <div class="term-line" style="margin-top:16px;"><span class="comment">// add to ~/.config/opencode/opencode.json</span></div>
+            <div class="term-line indent"><span>"plugin": [["~/opencode-indexer", {</span></div>
+            <div class="term-line indent"><span>&nbsp;&nbsp;"embedder": "openai",</span></div>
+            <div class="term-line indent"><span>&nbsp;&nbsp;"openaiApiKey": "sk-...",</span></div>
+            <div class="term-line indent"><span>&nbsp;&nbsp;"model": "text-embedding-3-small"</span></div>
+            <div class="term-line indent"><span>}]]</span></div>
+          </div>
+        </div>
+        <div class="term-window">
+          <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> quickstart.sh</div>
+          <div class="term-body">
+            <div class="term-line"><span class="comment"># opt in your project</span></div>
+            <div class="term-line"><span class="prompt">$</span><span>touch .codebase-index</span></div>
+            <div class="term-line" style="margin-top:10px;"><span class="comment"># restart OpenCode, then ask:</span></div>
+            <div class="term-line"><span class="prompt">$</span><span>codebase_search "how does auth work"</span></div>
+            <div class="term-line" style="margin-top:18px;"><span class="comment"># install the agent skill</span></div>
+            <div class="term-line"><span class="prompt">$</span><span>mkdir -p ~/.config/opencode/skills/opencode-indexer</span></div>
+            <div class="term-line"><span class="prompt">$</span><span>cp skills/opencode-indexer/SKILL.md ~/.config/opencode/skills/opencode-indexer/</span></div>
+            <div class="term-line" style="margin-top:20px; padding-top:14px; border-top:1px solid var(--border);">
+              <span class="success">✓ Index built: 142 files → 847 blocks</span>
+            </div>
+            <div class="term-line"><span class="output">⚡ Search complete in 47ms</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-<!-- CLI -->
-<section>
-  <div class="container">
-    <h2>CLI Tool</h2>
-    <pre><code>node cli.mjs index  ~/Sites/my-project              # Full index
-node cli.mjs search ~/Sites/my-project "auth flow"  # Search
-node cli.mjs status ~/Sites/my-project              # Stats
-node cli.mjs clear  ~/Sites/my-project              # Delete index</code></pre>
-  </div>
-</section>
+  <!-- ═══ CONFIG ═════════════════════════════════════ -->
+  <section id="config">
+    <div class="container">
+      <h2>config --list</h2>
+      <div class="term-window">
+        <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> env</div>
+        <div class="term-body">
+          <table class="term-table">
+            <thead><tr><th>Option</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>embedder</code></td><td><code>"ollama"</code></td><td><code>"openai"</code> or <code>"ollama"</code></td></tr>
+              <tr><td><code>model</code></td><td><code>"nomic-embed-text"</code></td><td>Embedding model name</td></tr>
+              <tr><td><code>vectorStore</code></td><td><code>"lancedb"</code></td><td><code>"qdrant"</code> or <code>"lancedb"</code></td></tr>
+              <tr><td><code>batchSize</code></td><td><code>20</code></td><td>Embedding batch size</td></tr>
+              <tr><td><code>maxResults</code></td><td><code>20</code></td><td>Max search results returned</td></tr>
+              <tr><td><code>branchAware</code></td><td><code>false</code></td><td>Auto re-index on git branch switch</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
 
-<!-- Footer -->
-<footer>
-  <div class="container">
-    <p>
-      <a href="https://github.com/jbpraxxys/opencode-indexer">GitHub</a> &nbsp;·&nbsp;
-      <a href="https://github.com/jbpraxxys/opencode-indexer/releases">Releases</a> &nbsp;·&nbsp;
-      <a href="https://github.com/jbpraxxys/opencode-indexer/blob/main/README.md">README</a>
-    </p>
-    <p style="margin-top:8px;">MIT License • Built with ❤️ for OpenCode</p>
-  </div>
-</footer>
+  <!-- ═══ CLI ════════════════════════════════════════ -->
+  <section id="cli">
+    <div class="container">
+      <h2>cli --help</h2>
+      <div class="term-window">
+        <div class="term-titlebar"><span class="term-dot close"></span><span class="term-dot minimize"></span><span class="term-dot maximize"></span> cli.mjs</div>
+        <div class="term-body">
+          <div class="term-line"><span class="prompt">$</span><span>node cli.mjs <span class="output">index</span> ~/Sites/my-project</span></div>
+          <div style="padding-left:22px; margin-bottom:10px;"><span class="comment"># Full index with tree-sitter parsing + hash caching</span></div>
+          <div class="term-line"><span class="prompt">$</span><span>node cli.mjs <span class="output">search</span> ~/Sites/my-project "auth flow"</span></div>
+          <div style="padding-left:22px; margin-bottom:10px;"><span class="comment"># Semantic search across indexed code</span></div>
+          <div class="term-line"><span class="prompt">$</span><span>node cli.mjs <span class="output">status</span> ~/Sites/my-project</span></div>
+          <div style="padding-left:22px; margin-bottom:10px;"><span class="comment"># Check index stats and project opt-in</span></div>
+          <div class="term-line"><span class="prompt">$</span><span>node cli.mjs <span class="output">clear</span> ~/Sites/my-project</span></div>
+          <div style="padding-left:22px;"><span class="comment"># Delete index for a project</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FOOTER ════════════════════════════════════ -->
+  <footer>
+    <div class="container">
+      <p>
+        <a href="https://github.com/jbpraxxys/opencode-indexer">github.com/jbpraxxys/opencode-indexer</a>
+        &nbsp;·&nbsp;
+        <a href="https://github.com/jbpraxxys/opencode-indexer/releases">Releases</a>
+        &nbsp;·&nbsp;
+        <a href="https://github.com/jbpraxxys/opencode-indexer/blob/main/README.md">README</a>
+      </p>
+      <p class="footer-exit">^C&nbsp;&nbsp;[Process completed]</p>
+    </div>
+  </footer>
+
+  <script>
+    // ── Matrix Rain ──────────────────────────────────
+    (function() {
+      const el = document.getElementById("matrix");
+      const chars = "アイウエオカキクケコサシスセソタチツテトabcdefghijklmnopqrstuvwxyz0123456789<>/{}[]|&^%$#@!?;:.,+=-_*";
+      const cols = Math.floor(window.innerWidth / 24);
+      for (let i = 0; i < cols; i++) {
+        const col = document.createElement("div");
+        col.className = "matrix-column";
+        col.style.left = (i * 24) + "px";
+        col.style.animationDuration = (8 + Math.random() * 14) + "s";
+        col.style.animationDelay = Math.random() * 10 + "s";
+        col.style.fontSize = (12 + Math.random() * 8) + "px";
+        const len = 8 + Math.floor(Math.random() * 20);
+        let text = "";
+        for (let j = 0; j < len; j++) text += chars[Math.floor(Math.random() * chars.length)];
+        col.textContent = text;
+        el.appendChild(col);
+      }
+    })();
+
+    // ── Hero Typing Animation ────────────────────────
+    (function() {
+      const cmd = "opencode-indexer --help";
+      const desc = "Semantic code search for OpenCode";
+      const cmdEl = document.getElementById("typeText");
+      const descEl = document.getElementById("heroDesc");
+      let i = 0, j = 0;
+      function typeCmd() {
+        if (i < cmd.length) { cmdEl.textContent += cmd[i]; i++; setTimeout(typeCmd, 50 + Math.random() * 40); }
+        else { setTimeout(typeDesc, 400); }
+      }
+      function typeDesc() {
+        if (j < desc.length) { descEl.textContent += desc[j]; j++; setTimeout(typeDesc, 30 + Math.random() * 30); }
+      }
+      setTimeout(typeCmd, 600);
+    })();
+
+    // ── Nav Dots Active Section ──────────────────────
+    (function() {
+      const dots = document.querySelectorAll(".nav-dot");
+      const sections = Array.from(dots).map(d => document.querySelector(d.getAttribute("href"))).filter(Boolean);
+      function update() {
+        let active = 0;
+        for (let i = sections.length - 1; i >= 0; i--) {
+          if (sections[i].getBoundingClientRect().top < window.innerHeight * 0.5) { active = i; break; }
+        }
+        dots.forEach((d, idx) => d.classList.toggle("active", idx === active));
+      }
+      window.addEventListener("scroll", update, { passive: true });
+      update();
+    })();
+
+    // ── Section Fade-In ──────────────────────────────
+    (function() {
+      const els = document.querySelectorAll("section");
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(e => {
+          if (e.isIntersecting) {
+            e.target.classList.add("section-visible");
+            e.target.classList.remove("section-hidden");
+          }
+        });
+      }, { threshold: 0.1 });
+      els.forEach(el => {
+        el.classList.add("section-hidden");
+        observer.observe(el);
+      });
+      // Immediately show hero
+      const hero = document.getElementById("home");
+      if (hero) { hero.classList.add("section-visible"); hero.classList.remove("section-hidden"); }
+    })();
+  </script>
 
 </body>
 </html>
