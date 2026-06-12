@@ -1,7 +1,13 @@
 {
   "name": "opencode-indexer",
-  "version": "1.0.0",
+  "version": "0.1.0",
+  "description": "Semantic code search plugin for OpenCode — tree-sitter AST indexing with LanceDB vector store",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jbpraxxys/opencode-indexer.git"
+  },
+  "keywords": ["opencode", "code-search", "vector-search", "lancedb", "tree-sitter", "ai-tools"],
   "main": "dist/index.js",
   "exports": {
     ".": {
