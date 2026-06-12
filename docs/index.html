@@ -30,7 +30,11 @@
     html { scroll-behavior: smooth; background: #000; }
     body {
       font-family: var(--font);
-      background: var(--bg);
+      background:
+        radial-gradient(circle at 50% 30%, rgba(0,255,65,0.03) 0%, transparent 60%),
+        radial-gradient(circle, rgba(0,255,65,0.04) 1px, transparent 1px);
+      background-size: 100% 100%, 32px 32px;
+      background-color: var(--bg);
       color: var(--text);
       line-height: 1.7;
       overflow-x: hidden;
@@ -69,7 +73,7 @@
       inset: 0;
       pointer-events: none;
       z-index: 0;
-      opacity: 0.06;
+      opacity: 0.12;
       overflow: hidden;
     }
     .matrix-column {
@@ -89,6 +93,24 @@
       10%  { opacity: 1; }
       90%  { opacity: 1; }
       100% { transform: translateY(110vh); opacity: 0; }
+    }
+
+    /* ── Hero Glow ─────────────────────────────────── */
+    .hero-glow {
+      position: fixed;
+      top: -30%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 900px;
+      height: 600px;
+      background: radial-gradient(ellipse at center, rgba(0,255,65,0.06) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 1;
+      animation: glowPulse 4s ease-in-out infinite alternate;
+    }
+    @keyframes glowPulse {
+      0%   { opacity: 0.5; transform: translateX(-50%) scale(1); }
+      100% { opacity: 1; transform: translateX(-50%) scale(1.15); }
     }
 
     /* ── Layout ──────────────────────────────────── */
@@ -396,6 +418,7 @@
 
   <div class="crt-vignette"></div>
   <div class="matrix-rain" id="matrix"></div>
+  <div class="hero-glow"></div>
 
   <!-- Nav Dots -->
   <div class="nav-dots" id="navDots">
@@ -616,7 +639,7 @@
     (function() {
       const el = document.getElementById("matrix");
       const chars = "アイウエオカキクケコサシスセソタチツテトabcdefghijklmnopqrstuvwxyz0123456789<>/{}[]|&^%$#@!?;:.,+=-_*";
-      const cols = Math.floor(window.innerWidth / 24);
+      const cols = Math.floor(window.innerWidth / 18);
       for (let i = 0; i < cols; i++) {
         const col = document.createElement("div");
         col.className = "matrix-column";
