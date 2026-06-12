@@ -1,7 +1,7 @@
 # OpenCode Indexer
 
 <p align="center">
-  <img src="banner.png" alt="OpenCode Indexer" width="600">
+  <img src="opencode-indexer-banner.png" alt="OpenCode Indexer" width="600">
 </p>
 
 **Semantic code search for OpenCode** — a plugin that indexes your project's source code into a vector database and enables the AI agent to search it using natural language. Tree-sitter AST parsing produces clean semantic blocks (functions, classes, methods). Hash caching skips unchanged files on re-index — fast incremental updates.
@@ -140,15 +140,15 @@ Run Qdrant locally (`./qdrant`) or connect to Qdrant Cloud with `qdrantApiKey`.
 
 ## What's New
 
-| Feature                          | Description                                                                             |
-| -------------------------------- | --------------------------------------------------------------------------------------- |
-| **Zero-Dependency LanceDB**      | Embedded vector store — no server, no Docker, no API key (default)                      |
-| **Tree-sitter AST Parsing**      | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP |
-| **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                      |
-| **Branch-Aware Indexing**        | Polls `.git/HEAD` every 3s — auto re-indexes on branch switch (opt-in)                  |
-| **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)  |
-| **Progress File**                | Real-time indexing progress (phase, percentage, counts) stored in `.codebase-index-store/` |
-| **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                            |
+| Feature                          | Description                                                                                  |
+| -------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Zero-Dependency LanceDB**      | Embedded vector store — no server, no Docker, no API key (default)                           |
+| **Tree-sitter AST Parsing**      | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP      |
+| **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                           |
+| **Branch-Aware Indexing**        | Polls `.git/HEAD` every 3s — auto re-indexes on branch switch (opt-in)                       |
+| **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)       |
+| **Progress File**                | Real-time indexing progress (phase, percentage, counts) stored in `.codebase-index-store/`   |
+| **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                                 |
 | **Consolidated Storage**         | Single `.codebase-index-store/` folder — LanceDB, progress, and branch tracking in one place |
 
 ---
@@ -212,13 +212,13 @@ When OpenCode runs in an opted-in project, two mechanisms keep the index fresh:
 
 Reads `.git/HEAD` directly (no subprocess) — poll interval configurable via `branchPollMs`.
 
-| Action            | Result                                                       |
-| ----------------- | ------------------------------------------------------------ |
-| Switch branches   | Full re-index (hash cache — unchanged = free)                |
-| Detached HEAD     | Polling suspends until back on a named branch                |
-| Change detected   | Logs `🔄 Branch changed: X → Y` to console                   |
-| Re-index complete | Logs `✅ Re-indexed for branch X (N files → M blocks)`       |
-| Poll failure      | Logs error to console, retries next interval                 |
+| Action            | Result                                                 |
+| ----------------- | ------------------------------------------------------ |
+| Switch branches   | Full re-index (hash cache — unchanged = free)          |
+| Detached HEAD     | Polling suspends until back on a named branch          |
+| Change detected   | Logs `🔄 Branch changed: X → Y` to console             |
+| Re-index complete | Logs `✅ Re-indexed for branch X (N files → M blocks)` |
+| Poll failure      | Logs error to console, retries next interval           |
 
 No full re-index. No API waste. Just the delta.
 
@@ -264,21 +264,21 @@ Deleted files are detected and purged automatically. No stale blocks.
 
 ## Configuration
 
-| Option          | Default                    | Description                        |
-| --------------- | -------------------------- | ---------------------------------- |
-| `embedder`      | `"ollama"`                 | `"openai"` or `"ollama"`           |
-| `model`         | `"nomic-embed-text"`       | Embedding model                    |
-| `openaiBaseUrl` | `"https://api.openai.com"` | OpenAI-compatible endpoint         |
-| `openaiApiKey`  | —                          | API key (required for openai)      |
-| `ollamaUrl`     | `"http://localhost:11434"` | Ollama server                      |
-| `vectorStore`   | `"lancedb"`                | `"qdrant"` or `"lancedb"`          |
-| `qdrantUrl`     | `"http://localhost:6333"`  | Qdrant server                      |
-| `qdrantApiKey`  | —                          | API key for Qdrant Cloud           |
-| `batchSize`     | `20`                       | Embedding batch size               |
-| `maxResults`    | `20`                       | Max search results                 |
-| `minScore`      | `0.4`                      | Similarity threshold               |
-| `maxFileSize`   | `1000000`                  | Max file size in bytes (1MB)       |
-| `branchAware`   | `false`                    | Auto re-index on git branch switch |
+| Option          | Default                    | Description                                    |
+| --------------- | -------------------------- | ---------------------------------------------- |
+| `embedder`      | `"ollama"`                 | `"openai"` or `"ollama"`                       |
+| `model`         | `"nomic-embed-text"`       | Embedding model                                |
+| `openaiBaseUrl` | `"https://api.openai.com"` | OpenAI-compatible endpoint                     |
+| `openaiApiKey`  | —                          | API key (required for openai)                  |
+| `ollamaUrl`     | `"http://localhost:11434"` | Ollama server                                  |
+| `vectorStore`   | `"lancedb"`                | `"qdrant"` or `"lancedb"`                      |
+| `qdrantUrl`     | `"http://localhost:6333"`  | Qdrant server                                  |
+| `qdrantApiKey`  | —                          | API key for Qdrant Cloud                       |
+| `batchSize`     | `20`                       | Embedding batch size                           |
+| `maxResults`    | `20`                       | Max search results                             |
+| `minScore`      | `0.4`                      | Similarity threshold                           |
+| `maxFileSize`   | `1000000`                  | Max file size in bytes (1MB)                   |
+| `branchAware`   | `false`                    | Auto re-index on git branch switch             |
 | `branchPollMs`  | `3000`                     | Poll interval for branch change detection (ms) |
 
 ---
