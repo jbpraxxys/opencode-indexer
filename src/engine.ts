@@ -1,17 +1,16 @@
 /**
  * Core indexing engine — supports OpenAI-compatible and Ollama embeddings,
- * with Qdrant and LanceDB vector stores. Each project gets its own
- * Qdrant collection (prefixed by project path hash) so indexes stay isolated.
+ * with Qdrant and LanceDB vector stores. LanceDB is the default (zero
+ * dependencies — embedded, file-based, no server required). Qdrant is
+ * available for team/external deployments.
  *
  * Config via opencode.json plugin options:
  *   {
  *     "plugin": [["opencode-indexer", {
  *       "embedder": "openai",
- *       "openaiBaseUrl": "...",
  *       "openaiApiKey": "sk-...",
  *       "model": "text-embedding-3-small",
- *       "vectorStore": "qdrant",
- *       "qdrantUrl": "http://localhost:6333"
+ *       "vectorStore": "lancedb"
  *     }]]
  *   }
  */
@@ -98,8 +97,7 @@ const IGNORE = [
   "**/.next/**", "**/vendor/**", "**/__pycache__/**", "**/.venv/**",
   "**/target/**", "**/*.min.js", "**/*.min.css", "**/*.map",
   "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml",
-  "**/.codebase-index/**", ".codebase-index-progress.json",
-  ".codebase-index-branch",
+  "**/.codebase-index-store/**",
 ]
 
 const EXTENSIONS = new Set([
@@ -306,8 +304,8 @@ export function loadProjectIgnore(root: string): ReturnType<typeof ignore> {
 
 // ─── Progress File ──────────────────────────────────────
 
-const PROGRESS_FILE = ".codebase-index-progress.json"
-const BRANCH_FILE = ".codebase-index-branch"
+const PROGRESS_FILE = ".codebase-index-store/progress.json"
+const BRANCH_FILE = ".codebase-index-store/branch"
 
 /**
  * Read the current git branch from .git/HEAD.
@@ -463,36 +461,51 @@ interface VectorStore {
 
 async function createLanceStore(workspaceRoot: string, colName: string): Promise<VectorStore> {
   const lancedb = await import("@lancedb/lancedb")
-  const dbPath = join(workspaceRoot, ".codebase-index", "lancedb")
+  const dbPath = join(workspaceRoot, ".codebase-index-store")
   let db: any = null
   let table: any = null
+  let initialized = false
 
   return {
-    async init() {
+    async init(dimension: number) {
       if (!existsSync(dbPath)) mkdirSync(dbPath, { recursive: true })
       db = await lancedb.connect(dbPath)
-      const tables = await db.tableNames()
+      const tables: string[] = await db.tableNames()
       if (tables.includes(colName)) {
         table = await db.openTable(colName)
       }
+      initialized = true
     },
     async upsertBatch(rows: any[]) {
-      try { await db.dropTable(colName) } catch {}
-      table = await db.createTable(colName, rows)
+      // Full re-index: overwrite entire table
+      if (!initialized) return
+      if (table) {
+        try { await db.dropTable(colName) } catch {}
+      }
+      table = await db.createTable(colName, rows, { existOk: true })
     },
     async upsertPoints(rows: any[]) {
-      if (!table) return
-      await table.add(rows)
+      if (!initialized) return
+      if (!table) {
+        // First index — create the table with this batch
+        table = await db.createTable(colName, rows, { existOk: true })
+        return
+      }
+      // Append mode — adds to existing table without dropping unchanged blocks
+      await table.add(rows, { mode: "append" })
     },
     async deleteByFile(filePath: string) {
       if (!table) return
-      await table.delete(`filePath = '${filePath.replace(/'/g, "''")}'`)
+      const escaped = filePath.replace(/'/g, "''")
+      await table.delete(`filePath = '${escaped}'`)
     },
     async getFileHash(filePath: string): Promise<string | null> {
       if (!table) return null
       try {
+        const escaped = filePath.replace(/'/g, "''")
         const results = await table
-          .filter(`filePath = '${filePath.replace(/'/g, "''")}'`)
+          .query()
+          .filter(`filePath = '${escaped}'`)
           .limit(1)
           .toArray()
         return results?.[0]?.fileHash ?? null
@@ -501,16 +514,21 @@ async function createLanceStore(workspaceRoot: string, colName: string): Promise
     async listStoredFiles(): Promise<string[]> {
       if (!table) return []
       try {
-        const all = await table.toArray()
+        const all = await table.query().toArray()
         const files: string[] = all.map((r: any) => r.filePath as string).filter(Boolean) as string[]
         return [...new Set(files)]
       } catch { return [] }
     },
     async search(vector: number[], maxResults: number) {
       if (!table) return []
-      const q = table.search(vector).limit(maxResults)
-      if ("metric" in q && typeof q.metric === "function") q.metric("cosine")
-      return q.toArray()
+      try {
+        return await table
+          .query()
+          .nearestTo(vector)
+          .distanceType("cosine")
+          .limit(maxResults)
+          .toArray()
+      } catch { return [] }
     },
     async count() {
       return table ? await table.countRows() : 0
@@ -984,7 +1002,8 @@ export class CodebaseIndexer {
     }
 
     // Phase: saving (upsertPoints — append, don't wipe existing unchanged blocks)
-    log(`💾 Saving ${allRows.length} vectors to Qdrant...`)
+    const storeLabel = this.storeType === "lancedb" ? "LanceDB" : "Qdrant"
+    log(`💾 Saving ${allRows.length} vectors to ${storeLabel}...`)
     progress({ phase: "saving", message: "Saving vectors...", current: allRows.length, total: allRows.length, percentage: 95, updatedAt: "" })
 
     // Use upsertPoints (append) instead of upsertBatch (wipe-and-replace)

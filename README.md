@@ -10,12 +10,77 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 
 ---
 
+## Quick Start
+
+### 1. Install
+
+```bash
+git clone https://github.com/jbpraxxys/opencode-indexer.git ~/opencode-indexer
+cd ~/opencode-indexer
+npm install
+npm run build
+```
+
+### 2. Configure
+
+Add to `~/.config/opencode/opencode.json`:
+
+```json
+"plugin": [
+    ["~/opencode-indexer", {
+        "embedder": "openai",
+        "openaiApiKey": "sk-...",
+        "model": "text-embedding-3-small"
+    }]
+]
+```
+
+That's it — LanceDB is the default vector store (zero setup). No server, no Docker.
+
+### 3. Opt in a project
+
+```bash
+cd ~/Sites/my-project
+touch .codebase-index
+```
+
+### 4. Restart OpenCode and start searching
+
+```
+opencode ~/Sites/my-project
+```
+
+The three tools (`codebase_index`, `codebase_search`, `codebase_status`) appear automatically. On first search, the indexer auto-builds the index — no manual `codebase_index` call needed.
+
+```text
+You: codebase_search "how does user login work"
+
+Agent: [Instantly finds auth-related code across your project...]
+```
+
+### Switching to Qdrant
+
+If you need an external vector store for team deployments:
+
+```json
+"plugin": [["~/opencode-indexer", {
+    "embedder": "openai",
+    "openaiApiKey": "sk-...",
+    "vectorStore": "qdrant",
+    "qdrantUrl": "http://localhost:6333"
+}]]
+```
+
+Run Qdrant locally (`./qdrant`) or connect to Qdrant Cloud with `qdrantApiKey`.
+
+---
+
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        OpenCode Agent                             │
-│  "Find the auth logic" ──▶ codebase_search ──▶ Qdrant ──▶ results│
+│  "Find the auth logic" ──▶ codebase_search ──▶ Vector Store ──▶ results│
 └──────────────────────────────────────────────────────────────────┘
          │                                        ▲
          │  tool calls                            │  vectors
@@ -46,7 +111,7 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 │  │ → methods      │   │ → re-parse    │   │ 20K char trunc     │   │
 │  └───────────────┘   └───────────────┘   └───────────────────┘   │
 │                                                                    │
-│  Progress: .codebase-index-progress.json (live during indexing)    │
+│  Progress: .codebase-index-store/progress.json (live)              │
 └──────────────────────────────────────────────────────────────────┘
          │
          │  chokidar (600ms debounce)
@@ -55,7 +120,7 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 │                       Your Project                                │
 │                                                                   │
 │   src/auth.ts    src/utils.ts    src/payments.ts   ...            │
-│   .codebase-index   .codebase-index-branch   .gitignore           │
+│   .codebase-index   .codebase-index-store/                         │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -66,7 +131,7 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 3. Tree-sitter parses files into semantic blocks (functions, classes)
 4. Hash cache checks each file — skips unchanged, re-parses changed
 5. Embedding API converts blocks → vectors
-6. Qdrant stores vectors with metadata
+6. Vector store stores vectors with metadata
 7. Query embedding → cosine similarity search → formatted results
 8. File watcher detects edits → re-indexes only the changed file
 9. **Branch polling detects `git checkout` → full re-index with hash caching (if `branchAware` enabled)**
@@ -77,73 +142,43 @@ Instead of grepping for exact keywords, ask "how does authentication work" and f
 
 | Feature                          | Description                                                                             |
 | -------------------------------- | --------------------------------------------------------------------------------------- |
+| **Zero-Dependency LanceDB**      | Embedded vector store — no server, no Docker, no API key (default)                      |
 | **Tree-sitter AST Parsing**      | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP |
 | **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                      |
 | **Branch-Aware Indexing**        | Polls `.git/HEAD` every 3s — auto re-indexes on branch switch (opt-in)                  |
 | **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)  |
-| **Progress File**                | Real-time `.codebase-index-progress.json` during indexing (phase, percentage, counts)   |
+| **Progress File**                | Real-time indexing progress (phase, percentage, counts) stored in `.codebase-index-store/` |
 | **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                            |
+| **Consolidated Storage**         | Single `.codebase-index-store/` folder — LanceDB, progress, and branch tracking in one place |
 
 ---
 
-## Prerequisites
+## Setup Options
 
-### 1. Qdrant (Vector Database)
+### Embedding Provider
 
-Download the latest Qdrant binary, extract, and run:
+**OpenAI** (recommended for quality) — set `embedder: "openai"` with your API key.
+
+**Ollama** (local, free) — install [Ollama](https://ollama.com), then:
 
 ```bash
-# Download and extract
+ollama pull nomic-embed-text
+```
+
+Then configure: `"embedder": "ollama"`, `"model": "nomic-embed-text"`.
+
+### Vector Store
+
+**LanceDB** (default) — embedded, file-based. Nothing to install.
+
+**Qdrant** (external) — for team deployments. Download and run:
+
+```bash
 curl -L https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-apple-darwin.tar.gz -o qdrant.tar.gz
-tar xzf qdrant.tar.gz
-
-# Run (starts on localhost:6333)
-./qdrant
+tar xzf qdrant.tar.gz && ./qdrant
 ```
 
-Verify: `curl http://localhost:6333/healthz`
-
-### 2. Embedding API
-
-**Option A: OpenAI-compatible** (recommended) — any endpoint with `/v1/embeddings`
-
-**Option B: Ollama** (local, free) — `ollama pull nomic-embed-text`
-
----
-
-## Installation
-
-```bash
-git clone https://github.com/jbpraxxys/opencode-indexer.git ~/opencode-indexer
-cd ~/opencode-indexer
-npm install
-npm run build
-```
-
-Add to `~/.config/opencode/opencode.json`:
-
-```json
-"plugin": [
-    ["~/opencode-indexer", {
-        "embedder": "openai",
-        "openaiBaseUrl": "https://your-embedding-proxy.example.com/code",
-        "openaiApiKey": "sk-...",
-        "model": "text-embedding-3-small",
-        "vectorStore": "qdrant",
-        "qdrantUrl": "http://localhost:6333",
-        "branchAware": true
-    }]
-]
-```
-
-Opt a project in:
-
-```bash
-cd ~/Sites/your-project
-touch .codebase-index
-```
-
-Restart OpenCode.
+Then set `"vectorStore": "qdrant"` in config. Verify with `curl http://localhost:6333/healthz`.
 
 ---
 
@@ -206,12 +241,12 @@ node cli.mjs clear ~/Sites/my-project    # Delete index
 2. **Tree-sitter AST Parsing** — extracts functions, classes, methods for TS/JS/Python/PHP; falls back to line-based chunking for other languages
 3. **Hash Check** — if `sha256(file)` matches stored hash, skip (unchanged)
 4. **Embedding** — batches of 20 code blocks → embedding API (20K char truncation for token limits)
-5. **Storage** — Qdrant with metadata (file path, line numbers, language, file hash)
+5. **Storage** — LanceDB (default, embedded) or Qdrant with metadata (file path, line numbers, language, file hash)
 
 ### Search Pipeline
 
 1. **Query Embedding** — natural language → vector
-2. **Cosine Similarity Search** — Qdrant returns closest matches
+2. **Cosine Similarity Search** — vector store returns closest matches
 3. **Result Formatting** — file paths, line numbers, similarity scores, code previews
 
 ### Hash Caching
@@ -261,7 +296,7 @@ Deleted files are detected and purged automatically. No stale blocks.
 
 ## Project Isolation
 
-Each project gets its own Qdrant collection (`idx_<sha256>`). Indexes never mix between projects.
+Each project gets its own vector store collection/table (`idx_<sha256>`). All indexer data lives under `.codebase-index-store/` (LanceDB, progress, branch tracking). The `.codebase-index` marker file at root is the only other file. Indexes never mix between projects.
 
 ---
 
@@ -287,15 +322,19 @@ Each project gets its own Qdrant collection (`idx_<sha256>`). Indexes never mix 
 
 ## Troubleshooting
 
+**LanceDB issues:** Delete `.codebase-index-store/` and re-index: `codebase_index(force=true)`. LanceDB data is per-project, so there's no server to restart.
+
 **Qdrant not available:** `curl http://localhost:6333/healthz`
 
 **Embedding API error:** Check API key and base URL. Blocks truncated to 20K chars to stay within token limits.
 
 **Plugin not showing tools:** Restart OpenCode. Check `opencode plugin list`.
 
-**Too many blocks (noise):** The glob ignore fix ensures `node_modules`, `vendor`, etc. are excluded. If you have a stale index from before the fix, run `codebase_index(force=true)`.
+**Too many blocks (noise):** The glob ignore fix ensures `node_modules`, `vendor`, etc. are excluded. If you have a stale index, run `codebase_index(force=true)`.
 
 **Re-index a project:** `codebase_index(force=true)` in OpenCode, or `node cli.mjs index .` from CLI.
+
+**Switch between LanceDB and Qdrant:** Change `vectorStore` in your config and re-index with `force=true`. Old data in the previous store is not automatically deleted — remove it manually (`.codebase-index-store/` folder or Qdrant collection).
 
 ### "Too many open files" in Qdrant (macOS binary)
 

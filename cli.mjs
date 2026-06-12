@@ -11,6 +11,8 @@
  * Config reads from ~/.config/opencode/opencode.json (plugin options)
  * or from environment variables:
  *   OPENCODE_INDEXER_API_KEY, OPENCODE_INDEXER_BASE_URL, etc.
+ *
+ * Default: Ollama + LanceDB (zero setup)
  */
 
 import { readFileSync, existsSync } from "fs"
@@ -39,12 +41,11 @@ function loadConfig() {
 
   // Fallback to env vars
   return {
-    embedder: process.env.OPENCODE_INDEXER_EMBEDDER || "openai",
+    embedder: process.env.OPENCODE_INDEXER_EMBEDDER || "ollama",
     openaiApiKey: process.env.OPENCODE_INDEXER_API_KEY,
     openaiBaseUrl: process.env.OPENCODE_INDEXER_BASE_URL || "https://prod-ai-proxy-openai-embeddings.praxxys.dev/code",
-    model: process.env.OPENCODE_INDEXER_MODEL || "text-embedding-3-small",
-    vectorStore: process.env.OPENCODE_INDEXER_VECTOR_STORE || "qdrant",
-    qdrantUrl: process.env.OPENCODE_INDEXER_QDRANT_URL || "http://localhost:6333",
+    model: process.env.OPENCODE_INDEXER_MODEL || "nomic-embed-text",
+    vectorStore: process.env.OPENCODE_INDEXER_VECTOR_STORE || "lancedb",
   }
 }
 
@@ -85,14 +86,14 @@ Examples:
     case "index": {
       console.log(`\n  📦 Indexing: ${target}\n`)
       console.log(`  Embedder: ${pluginConfig.embedder} | Model: ${pluginConfig.model}`)
-      console.log(`  Vector Store: ${pluginConfig.vectorStore} | Qdrant: ${pluginConfig.qdrantUrl}\n`)
+      console.log(`  Vector Store: ${pluginConfig.vectorStore}${pluginConfig.qdrantUrl ? ` | Qdrant: ${pluginConfig.qdrantUrl}` : ""}\n`)
 
       // Check if already indexed
       try {
         await indexer.init()
         const existing = await indexer.stats()
         if (existing.blocks > 0) {
-          console.log(`  ⚠️  Index already exists with ${existing.blocks} blocks in Qdrant.`)
+          console.log(`  ⚠️  Index already exists with ${existing.blocks} blocks.`)
           console.log(`  Run with --force to re-index, or search with:\n`)
           console.log(`    node ${process.argv[1]} search "${target}" "your query"\n`)
           process.exit(0)
@@ -115,7 +116,7 @@ Examples:
         console.log(`  Files indexed:  ${files}`)
         console.log(`  Code blocks:    ${blocks}`)
         console.log(`  Time:           ${elapsed}s`)
-        console.log(`  Qdrant blocks:  ${stats.blocks}`)
+        console.log(`  Blocks:        ${stats.blocks}`)
         console.log(`  Collection:     ${stats.dbPath}\n`)
         console.log(`  Next: node ${process.argv[1]} search "${target}" "your query"\n`)
       } catch (err) {
@@ -178,7 +179,7 @@ Examples:
           console.log(`  ───────────────────────`)
           console.log(`  Status:        Active`)
           console.log(`  Blocks:        ${stats.blocks}`)
-          console.log(`  Storage:       ${pluginConfig.vectorStore} (Qdrant)`)
+          console.log(`  Storage:       ${pluginConfig.vectorStore}`)
           console.log(`  Collection:    ${stats.dbPath}`)
           console.log(`  Embedder:      ${pluginConfig.embedder}`)
           console.log(`  Model:         ${pluginConfig.model}\n`)
@@ -194,10 +195,17 @@ Examples:
         await indexer.init()
         const stats = await indexer.stats()
         if (stats.blocks > 0) {
-          // Delete Qdrant collection
-          const url = (pluginConfig.qdrantUrl || "http://localhost:6333").replace(/\/$/, "")
-          await fetch(`${url}/collections/code_blocks`, { method: "DELETE" })
+          if (pluginConfig.vectorStore === "qdrant") {
+            // Delete Qdrant collection via REST API
+            const url = (pluginConfig.qdrantUrl || "http://localhost:6333").replace(/\/$/, "")
+            const colName = stats.dbPath.split("/").pop()
+            await fetch(`${url}/collections/${colName}`, { method: "DELETE" })
+          }
+          // LanceDB: data is in .codebase-index-store/ — user deletes folder manually
           console.log(`\n  🗑️  Index cleared for: ${target} (was ${stats.blocks} blocks)\n`)
+          if (pluginConfig.vectorStore !== "qdrant") {
+            console.log(`  💡 LanceDB data is at: .codebase-index-store/ — delete this folder to fully remove.\n`)
+          }
         } else {
           console.log(`\n  📭 No index to clear.\n`)
         }

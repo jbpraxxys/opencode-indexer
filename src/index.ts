@@ -13,11 +13,11 @@
  * To opt in:
  *   touch ~/Sites/my-project/.codebase-index
  *
- * Config in opencode.json:
+ * Config in opencode.json (LanceDB is the default — zero setup needed):
  *   {
  *     "plugin": [["opencode-indexer", {
- *       "vectorStore": "qdrant",
- *       "qdrantUrl": "http://localhost:6333"
+ *       "embedder": "ollama",
+ *       "vectorStore": "lancedb"
  *     }]]
  *   }
  */
@@ -420,7 +420,7 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
       codebase_status: makeCodebaseStatus(pluginConfig),
     },
     "experimental.chat.system.transform": async (_input: any, output: any) => {
-      const backend = pluginConfig.vectorStore ?? "qdrant"
+      const backend = pluginConfig.vectorStore ?? "lancedb"
       output.system.push(
         "## Codebase Indexing\n" +
         "You have access to codebase indexing tools for semantic code search:\n\n" +
