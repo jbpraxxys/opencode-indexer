@@ -77,51 +77,43 @@ Run Qdrant locally (`./qdrant`) or connect to Qdrant Cloud with `qdrantApiKey`.
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        OpenCode Agent                             │
-│  "Find the auth logic" ──▶ codebase_search ──▶ Vector Store ──▶ results│
-└──────────────────────────────────────────────────────────────────┘
-         │                                        ▲
-         │  tool calls                            │  vectors
-         ▼                                        │
-┌──────────────────────────────┐      ┌──────────────────────────────┐
-│   Server Plugin               │      │   Vector Store                │
-│   (src/index.ts)              │      │   Qdrant / LanceDB            │
-│                               │      │                               │
-│  ▪ codebase_index             │───embed──▶  │  idx_<sha256>       │
-│  ▪ codebase_search            │      │  ▪ filePath                   │
-│  ▪ codebase_status            │      │  ▪ content                    │
-│  ▪ file watcher (chokidar)    │      │  ▪ startLine/endLine          │
-│  ▪ branch polling (3s)        │      │  ▪ language                   │
-│  ▪ system prompt              │      │  ▪ hash + fileHash            │
-└──────────────────────────────┘      └──────────────────────────────┘
-         │  parse + embed
-         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                     Indexing Engine (src/engine.ts)                │
-│                                                                    │
-│  ┌───────────────┐   ┌───────────────┐   ┌───────────────────┐   │
-│  │ Tree-sitter    │   │ Hash Cache    │   │ Embedding API      │   │
-│  │ AST Parser     │   │               │   │                    │   │
-│  │                │   │ sha256(file)  │   │ OpenAI-compat      │   │
-│  │ TS/JS/Py/PHP   │   │ = stored?     │   │ or Ollama          │   │
-│  │ → functions    │   │ → skip!       │   │                    │   │
-│  │ → classes      │   │ → changed?    │   │ batch of 20        │   │
-│  │ → methods      │   │ → re-parse    │   │ 20K char trunc     │   │
-│  └───────────────┘   └───────────────┘   └───────────────────┘   │
-│                                                                    │
-│  Progress: .codebase-index-store/progress.json (live)              │
-└──────────────────────────────────────────────────────────────────┘
-         │
-         │  chokidar (600ms debounce)
-         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                       Your Project                                │
-│                                                                   │
-│   src/auth.ts    src/utils.ts    src/payments.ts   ...            │
-│   .codebase-index   .codebase-index-store/                         │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    AGENT["<b>OpenCode Agent</b><br/>codebase_search('auth flow')"]
+
+    PLUGIN["<b>Server Plugin</b> (src/index.ts)<br/>
+    ▪ codebase_index<br/>
+    ▪ codebase_search<br/>
+    ▪ codebase_status<br/>
+    ▪ file watcher (chokidar)<br/>
+    ▪ branch polling (3s)"]
+
+    ENGINE["<b>Indexing Engine</b> (src/engine.ts)"]
+    PARSER["Tree-sitter<br/>AST Parser<br/>TS/JS/Py/PHP"]
+    CACHE["Hash Cache<br/>sha256(file)<br/>skip unchanged"]
+    EMBED["Embedding API<br/>OpenAI or Ollama<br/>batch of 20"]
+
+    STORE["<b>Vector Store</b><br/>LanceDB / Qdrant<br/>idx_&lt;sha256&gt;<br/>filePath • content<br/>startLine • endLine<br/>language • hash"]
+
+    PROJECT["<b>Your Project</b><br/>src/auth.ts<br/>src/utils.ts<br/>.codebase-index<br/>.codebase-index-store/"]
+
+    AGENT -->|"tool call"| PLUGIN
+    PLUGIN -->|"parse + embed"| ENGINE
+    ENGINE --- PARSER
+    ENGINE --- CACHE
+    ENGINE --- EMBED
+    EMBED -->|"vectors"| STORE
+    STORE -->|"results"| AGENT
+    PLUGIN -->|"chokidar watch"| PROJECT
+
+    style AGENT fill:#1e293b,stroke:#22d3ee,color:#e2e8f0
+    style PLUGIN fill:#1e293b,stroke:#8b5cf6,color:#e2e8f0
+    style ENGINE fill:#1e293b,stroke:#f59e0b,color:#e2e8f0
+    style PARSER fill:#0f172a,stroke:#8b5cf6,color:#cbd5e1
+    style CACHE fill:#0f172a,stroke:#8b5cf6,color:#cbd5e1
+    style EMBED fill:#0f172a,stroke:#8b5cf6,color:#cbd5e1
+    style STORE fill:#1e293b,stroke:#22d3ee,color:#e2e8f0
+    style PROJECT fill:#0f172a,stroke:#475569,color:#94a3b8
 ```
 
 **Flow:**
