@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenCode Indexer — Semantic Code Search</title>
+  <meta name="description" content="Semantic code search plugin for OpenCode. Indexes your project source code into a vector database using tree-sitter AST parsing. Natural language search instead of regex.">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --orange: #d2991d;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.6;
+    }
+    .container { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+    /* Hero */
+    .hero { text-align: center; padding: 80px 0 48px; }
+    .hero img { max-width: 600px; width: 100%; border-radius: 12px; margin-bottom: 32px; }
+    .hero h1 { font-size: 2.4rem; font-weight: 700; margin-bottom: 12px; }
+    .hero p { font-size: 1.15rem; color: var(--muted); max-width: 600px; margin: 0 auto 32px; }
+    .hero .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-block; padding: 10px 24px; border-radius: 8px; font-size: .95rem;
+      font-weight: 600; text-decoration: none; transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: #238636; color: #fff; border: 1px solid rgba(240,246,252,.1); }
+    .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+    /* Sections */
+    section { padding: 56px 0; }
+    section + section { border-top: 1px solid var(--border); }
+    h2 { font-size: 1.5rem; margin-bottom: 16px; }
+    h3 { font-size: 1.15rem; margin-bottom: 8px; color: var(--accent); }
+
+    /* Features */
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+    .feature {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px;
+    }
+    .feature-icon { font-size: 1.5rem; margin-bottom: 8px; }
+    .feature h4 { font-size: .95rem; margin-bottom: 6px; }
+    .feature p { font-size: .88rem; color: var(--muted); }
+
+    /* Code blocks */
+    pre {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px 20px; overflow-x: auto;
+      font-size: .85rem; line-height: 1.55; margin: 12px 0;
+    }
+    code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+
+    /* Steps */
+    .steps { display: flex; flex-direction: column; gap: 16px; }
+    .step {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 16px 20px;
+    }
+    .step-num { color: var(--accent); font-weight: 700; font-size: .8rem; margin-bottom: 4px; }
+    .step code { font-size: .82rem; }
+
+    /* Table */
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: .9rem; }
+    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; }
+    td:first-child code { white-space: nowrap; }
+
+    /* Footer */
+    footer { border-top: 1px solid var(--border); padding: 32px 0; text-align: center; color: var(--muted); font-size: .85rem; }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<!-- Hero -->
+<div class="hero">
+  <img src="https://raw.githubusercontent.com/jbpraxxys/opencode-indexer/main/banner.png" alt="OpenCode Indexer">
+  <h1>Semantic Code Search for OpenCode</h1>
+  <p>Ask &ldquo;how does authentication work?&rdquo; instead of grepping for <code>validateToken</code>. Your AI agent finds relevant code across your entire project — instantly.</p>
+  <div class="cta">
+    <a href="https://github.com/jbpraxxys/opencode-indexer" class="btn btn-primary">View on GitHub</a>
+    <a href="#quick-start" class="btn btn-secondary">Quick Start</a>
+  </div>
+</div>
+
+<!-- Features -->
+<section>
+  <div class="container">
+    <h2>Features</h2>
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">🌳</div>
+        <h4>Tree-sitter AST Parsing</h4>
+        <p>Extracts functions, classes, and methods as clean semantic blocks. Supports TypeScript, JavaScript, Python, and PHP.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⚡</div>
+        <h4>Hash Caching</h4>
+        <p>SHA-256 per-file hashes. Re-indexing only processes changed files. &ldquo;157 unchanged, 2 updated&rdquo; is the norm.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔍</div>
+        <h4>Natural Language Search</h4>
+        <p>Describe what you&rsquo;re looking for in plain English. Cosine similarity returns the closest matches across your entire codebase.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📦</div>
+        <h4>Zero-Dependency LanceDB</h4>
+        <p>Embedded vector store — no server, no Docker, no API key. Just works. Qdrant available for team deployments.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">👀</div>
+        <h4>File Watcher</h4>
+        <p>Chokidar keeps the index fresh as you edit. Save a file → re-indexed in 600ms. Delete a file → blocks purged automatically.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔄</div>
+        <h4>Branch-Aware</h4>
+        <p>Opt-in branch polling. Switch branches → auto re-index with hash caching. No stale blocks from the wrong branch.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Supported Languages -->
+<section>
+  <div class="container">
+    <h2>Supported Languages</h2>
+    <table>
+      <thead><tr><th>Tree-sitter AST (semantic blocks)</th><th>Line-based (fallback)</th></tr></thead>
+      <tbody>
+        <tr><td>TypeScript (.ts, .tsx)</td><td>Ruby, Go, Rust, Java, Kotlin</td></tr>
+        <tr><td>JavaScript (.js, .jsx, .mjs, .cjs)</td><td>C, C++, Swift, Zig</td></tr>
+        <tr><td>Python (.py)</td><td>CSS, SCSS, HTML, Vue, Svelte</td></tr>
+        <tr><td>PHP (.php)</td><td>Markdown, JSON, YAML, TOML, Bash</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Install -->
+<section>
+  <div class="container">
+    <h2>Install</h2>
+    <pre><code>git clone https://github.com/jbpraxxys/opencode-indexer.git ~/opencode-indexer
+cd ~/opencode-indexer
+npm install
+npm run build</code></pre>
+    <p style="margin-top:16px;">Then add to <code>~/.config/opencode/opencode.json</code>:</p>
+    <pre><code>"plugin": [
+    ["~/opencode-indexer", {
+        "embedder": "openai",
+        "openaiApiKey": "sk-...",
+        "model": "text-embedding-3-small"
+    }]
+]</code></pre>
+  </div>
+</section>
+
+<!-- Quick Start -->
+<section id="quick-start">
+  <div class="container">
+    <h2>Quick Start</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">STEP 1</div>
+        <p>Opt in your project: <code>touch .codebase-index</code> in the project root</p>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 2</div>
+        <p>Restart OpenCode in your project</p>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 3</div>
+        <p>Install the agent skill (strongly recommended):</p>
+        <pre><code>mkdir -p ~/.config/opencode/skills/opencode-indexer
+cp skills/opencode-indexer/SKILL.md ~/.config/opencode/skills/opencode-indexer/</code></pre>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 4</div>
+        <p>Ask your agent a natural language question:</p>
+        <pre><code>codebase_search "how does user login work"</code></pre>
+        <p style="color:var(--muted); font-size:.88rem; margin-top:8px;">Auto-indexing kicks in on the first search — no manual <code>codebase_index</code> call needed.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Configuration -->
+<section>
+  <div class="container">
+    <h2>Configuration</h2>
+    <table>
+      <thead><tr><th>Option</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>embedder</code></td><td><code>"ollama"</code></td><td><code>"openai"</code> or <code>"ollama"</code></td></tr>
+        <tr><td><code>model</code></td><td><code>"nomic-embed-text"</code></td><td>Embedding model name</td></tr>
+        <tr><td><code>vectorStore</code></td><td><code>"lancedb"</code></td><td><code>"qdrant"</code> or <code>"lancedb"</code></td></tr>
+        <tr><td><code>batchSize</code></td><td><code>20</code></td><td>Embedding batch size</td></tr>
+        <tr><td><code>maxResults</code></td><td><code>20</code></td><td>Max search results</td></tr>
+        <tr><td><code>branchAware</code></td><td><code>false</code></td><td>Auto re-index on git branch switch</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Three Tools -->
+<section>
+  <div class="container">
+    <h2>Three Tools</h2>
+    <table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>codebase_index</code></td><td>Index the project (tree-sitter parsing + hash caching)</td></tr>
+        <tr><td><code>codebase_search</code></td><td>Semantic search across indexed code</td></tr>
+        <tr><td><code>codebase_status</code></td><td>Check index stats and project opt-in</td></tr>
+      </tbody>
+    </table>
+    <p style="color:var(--muted); font-size:.88rem; margin-top:12px;">The agent follows a <strong>Search Priority Rule</strong>: checks <code>codebase_status</code> first (free, no API call), then uses <code>codebase_search</code> for all code search. Falls back to grep/glob only as a last resort.</p>
+  </div>
+</section>
+
+<!-- CLI -->
+<section>
+  <div class="container">
+    <h2>CLI Tool</h2>
+    <pre><code>node cli.mjs index  ~/Sites/my-project              # Full index
+node cli.mjs search ~/Sites/my-project "auth flow"  # Search
+node cli.mjs status ~/Sites/my-project              # Stats
+node cli.mjs clear  ~/Sites/my-project              # Delete index</code></pre>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>
+      <a href="https://github.com/jbpraxxys/opencode-indexer">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/jbpraxxys/opencode-indexer/releases">Releases</a> &nbsp;·&nbsp;
+      <a href="https://github.com/jbpraxxys/opencode-indexer/blob/main/README.md">README</a>
+    </p>
+    <p style="margin-top:8px;">MIT License • Built with ❤️ for OpenCode</p>
+  </div>
+</footer>
+
+</body>
+</html>
