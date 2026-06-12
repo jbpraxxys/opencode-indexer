@@ -58,6 +58,22 @@ You: codebase_search "how does user login work"
 Agent: [Instantly finds auth-related code across your project...]
 ```
 
+### 5. Install the agent skill (strongly recommended)
+
+The skill tells the AI agent to **always use `codebase_search` first** before falling back to grep/glob/find. Without it, the agent may waste context on regex searches:
+
+```bash
+mkdir -p ~/.config/opencode/skills/opencode-indexer
+cp skills/opencode-indexer/SKILL.md ~/.config/opencode/skills/opencode-indexer/
+```
+
+Or symlink for auto-updates when you pull new versions:
+
+```bash
+mkdir -p ~/.config/opencode/skills
+ln -s "$(pwd)/skills/opencode-indexer" ~/.config/opencode/skills/opencode-indexer
+```
+
 ### Switching to Qdrant
 
 If you need an external vector store for team deployments:
@@ -186,7 +202,7 @@ Three tools available to the AI agent:
 | `codebase_search` | Semantic search across indexed code                    |
 | `codebase_status` | Check index stats                                      |
 
-The agent follows a **Search Priority Rule**: always tries `codebase_search` first, falls back to grep/glob only if no results.
+The agent follows a **Search Priority Rule**: always tries `codebase_search` first, falls back to grep/glob only if no results. The agent skill (step 5 above) reinforces this rule with rationalization counters and red flags — install it so the agent never reaches for grep first.
 
 ### Auto-Indexing (File Watcher + Branch Detection)
 
@@ -305,6 +321,9 @@ Each project gets its own vector store collection/table (`idx_<sha256>`). All in
 │   ├── engine.ts        # Tree-sitter, hash caching, progress, Qdrant/LanceDB
 │   ├── index.ts         # Plugin entry: tools, chokidar watcher, priority rule
 │   └── tui.ts           # TUI entry (kv presence flag)
+├── skills/
+│   └── opencode-indexer/
+│       └── SKILL.md     # Agent skill — enforces search priority rule
 ├── banner.png           # Project banner
 ├── package.json
 └── tsconfig.json

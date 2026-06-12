@@ -430,11 +430,12 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         "- **codebase_search** — Natural language search across indexed code.\n" +
         "- **codebase_status** — Check if indexing is set up.\n\n" +
         "### Search Priority Rule\n" +
-        "When asked to find code, understand logic, or locate files — **always try `codebase_search` first** " +
-        "before using grep, glob, find, or reading files directly. " +
+        "When asked to find code, understand logic, or locate files — **always use `codebase_search` first** " +
+        "for every search demand. " +
         "`codebase_search` is faster, understands semantics, and finds cross-file patterns.\n\n" +
-        "**Only fall back to grep/glob/find if `codebase_search` returns no results or fails.**\n" +
-        "Do not use both — try search first, then fall back if needed.\n\n" +
+        "**Do NOT use `grep`, `glob`, or `find` unless `codebase_search` returns no results or fails** — " +
+        "and even then, try rephrasing your search query first.\n" +
+        "Do not use both — try search first, then fall back only if needed.\n\n" +
         "For projects with a `.codebase-index` file, indexing happens automatically on first tool use. " +
         "The file watcher keeps the index fresh as you edit code. " +
         "Re-indexing is fast — hash caching only reprocesses changed files. " +
