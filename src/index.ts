@@ -429,19 +429,75 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         "  Requires `.codebase-index` marker file in the project root (auto-index on first use).\n" +
         "- **codebase_search** — Natural language search across indexed code.\n" +
         "- **codebase_status** — Check if indexing is set up.\n\n" +
-        "### Search Priority Rule\n" +
-        "When asked to find code, understand logic, or locate files — **always use `codebase_search` first** " +
-        "for every search demand. " +
-        "`codebase_search` is faster, understands semantics, and finds cross-file patterns.\n\n" +
-        "**Do NOT use `grep`, `glob`, or `find` unless `codebase_search` returns no results or fails** — " +
-        "and even then, try rephrasing your search query first.\n" +
-        "Do not use both — try search first, then fall back only if needed.\n\n" +
-        "For projects with a `.codebase-index` file, indexing happens automatically on first tool use. " +
-        "The file watcher keeps the index fresh as you edit code. " +
-        "Re-indexing is fast — hash caching only reprocesses changed files. " +
+        "### Search Priority Rule ⚠️\n" +
+        "**This is the most important rule. Violating it wastes context and misses results.**\n\n" +
+        "**Precondition:** Before any code search, if you're unsure whether the project is opted in, " +
+        "call `codebase_status()` first. It's free (no embedding call) and tells you instantly. " +
+        "The rules below apply once the project IS opted in and indexed.\n\n" +
+        "```\n" +
+        "Search demand received (find code, locate logic, understand behavior)\n" +
+        "    ↓\n" +
+        "codebase_status()               ← First: is project opted in?\n" +
+        "    ↓\n" +
+        "Not opted in? → Tell user: touch .codebase-index\n" +
+        "    ↓ YES\n" +
+        "codebase_search(query)          ← Always use semantic search first\n" +
+        "    ↓\n" +
+        "Results found? → YES → Done.\n" +
+        "    ↓ NO\n" +
+        "Rephrase query. Try again.\n" +
+        "    ↓\n" +
+        "Still no results?\n" +
+        "    ↓\n" +
+        "grep / glob / find              ← ONLY as last resort\n" +
+        "```\n\n" +
+        "1. **Call `codebase_status()` first** if unsure about opt-in (instant, no API call).\n" +
+        "2. **ALWAYS use `codebase_search` first** for every code search (once opted in).\n" +
+        "3. If no results, **rephrase your query** and try again before falling back.\n" +
+        "4. Only after `codebase_search` fails with rephrased queries, use `grep`, `glob`, or `find`.\n" +
+        "5. **Do not use both simultaneously** — try search first, fall back only if needed.\n\n" +
+        "### Rationalization Table — DO NOT Make These Excuses\n\n" +
+        '| Excuse | Reality |\n' +
+        '|--------|---------|\n' +
+        '| "I know the exact function name, grep is faster" | `codebase_search` finds it AND shows related code grep misses |\n' +
+        '| "This is just a quick lookup" | Quick lookups benefit most from semantic search |\n' +
+        '| "I need ALL occurrences" | Valid fallback case — but try `codebase_search` first |\n' +
+        '| "The codebase isn\'t indexed yet" | Call `codebase_status()` first — auto-index on first use handles it |\n' +
+        '| "I\'m not sure what to search for" | Semantic search handles vague queries better than grep |\n' +
+        '| "Grep is more reliable" | Hash-cached index with file watching. Always fresh. |\n' +
+        '| "Let me just grep first to see what\'s there" | This is the #1 violation. Use `codebase_search` first. |\n\n' +
+        "### Red Flags — STOP and Use codebase_search\n\n" +
+        "- About to type `grep` for a code question\n" +
+        "- About to type `glob` to find files by function/class name\n" +
+        '- Thinking "let me just grep first to see what\'s there"\n' +
+        "- Not sure what to search for (semantic search handles vague queries)\n" +
+        '- Question is about **behavior** ("how does X work?") not text matching\n\n' +
+        "### New Project Flow — Check Status FIRST\n\n" +
+        "When entering a project where you don't know if indexing is set up:\n\n" +
+        "```\n" +
+        "codebase_status()               ← ALWAYS first — instant, free, no API call\n" +
+        "    ↓\n" +
+        "Not opted in? → Tell user: touch .codebase-index to enable\n" +
+        "    ↓\n" +
+        "Opted in, no index? → codebase_index() (auto-index on first use handles this)\n" +
+        "    ↓\n" +
+        "Opted in, index ready? → codebase_search(\"your query\")\n" +
+        "```\n\n" +
+        "**Why `codebase_status` first?** `codebase_search` on a non-opted-in project fails immediately. " +
+        "`codebase_status` is a single call that tells you everything: opt-in status, block count, storage backend. " +
+        "No embedding API waste. One call instead of N parallel failures.\n\n" +
+        "Auto-indexing happens on first tool use in opted-in projects. The file watcher keeps the index " +
+        "current as you edit code. Hash caching skips unchanged files — re-indexing is fast. " +
         (pluginConfig.branchAware
           ? "**Branch-aware indexing is enabled** — the index auto-updates when you switch git branches. "
           : "")
+      )
+
+      // Also remind the agent to load the codebase-search skill for full guidance
+      output.system.push(
+        "💡 **Load the `codebase-search` skill** for full search priority rules, " +
+        "query tips, troubleshooting, and configuration details. The skill contains " +
+        "additional guidance beyond what's summarized here."
       )
     },
     dispose: async () => {

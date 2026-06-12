@@ -60,7 +60,7 @@ Agent: [Instantly finds auth-related code across your project...]
 
 ### 5. Install the agent skill (strongly recommended)
 
-The skill tells the AI agent to **always use `codebase_search` first** before falling back to grep/glob/find. Without it, the agent may waste context on regex searches:
+The skill tells the AI agent to **check `codebase_status` first** (free, no API call), then **always use `codebase_search`** before falling back to grep/glob/find. Without it, the agent may waste context on regex searches or make parallel search calls into non-opted-in projects:
 
 ```bash
 mkdir -p ~/.config/opencode/skills/opencode-indexer
@@ -202,7 +202,7 @@ Three tools available to the AI agent:
 | `codebase_search` | Semantic search across indexed code                    |
 | `codebase_status` | Check index stats                                      |
 
-The agent follows a **Search Priority Rule**: always tries `codebase_search` first, falls back to grep/glob only if no results. The agent skill (step 5 above) reinforces this rule with rationalization counters and red flags — install it so the agent never reaches for grep first.
+The agent follows a **Search Priority Rule**: checks `codebase_status` first (instant, free), then uses `codebase_search` for all code search, falling back to grep/glob only if semantic search returns no results. This prevents wasted calls on non-opted-in projects. The agent skill (step 5 above) reinforces this rule with a rationalization table and red flags — install it so the agent never reaches for grep first.
 
 ### Auto-Indexing (File Watcher + Branch Detection)
 

@@ -1,6 +1,6 @@
 ---
 name: codebase-search
-description: Use when searching for code, understanding logic, locating files, or looking up how something works in the codebase. Also use when the project has a `.codebase-index` marker file, when you see codebase_index/codebase_search/codebase_status tools, or when you need to index, search, or check the status of semantic code search. Trigger for any code search demand — never use grep/glob/find first.
+description: MANDATORY — Load this skill BEFORE any code search. Use when searching for code, understanding logic, locating files, or looking up how something works in the codebase. Also use when the project has a `.codebase-index` marker file, when you see codebase_index/codebase_search/codebase_status tools in the tool list, or when you need to index, search, or check the status of semantic code search. Trigger for ANY code search demand — even a "quick grep" counts. NEVER use grep/glob/find without loading this skill first.
 ---
 
 # Codebase Search
@@ -11,10 +11,16 @@ Semantic code search plugin for OpenCode. Indexes source code into a vector data
 
 **This is the most important rule. Violating it wastes context and misses results.**
 
+**Precondition:** Before any code search, if you're unsure whether the project is opted in, call `codebase_status()` first. It's free (no embedding call) and tells you instantly. The rules below apply once the project IS opted in and indexed.
+
 ```
 Search demand received (find code, locate logic, understand behavior)
     ↓
-codebase_search(query)          ← ALWAYS first
+codebase_status()               ← First: is project opted in?
+    ↓
+Not opted in? → Tell user: touch .codebase-index
+    ↓ YES
+codebase_search(query)          ← Always use semantic search first
     ↓
 Results found? → YES → Done.
     ↓ NO
@@ -25,10 +31,11 @@ Still no results?
 grep / glob / find              ← ONLY as last resort
 ```
 
-1. **ALWAYS use `codebase_search` first** for every code search.
-2. If no results, **rephrase your query** and try again before falling back.
-3. Only after `codebase_search` fails with rephrased queries, use `grep`, `glob`, or `find`.
-4. **Do not use both simultaneously** — try search first, fall back only if needed.
+1. **Call `codebase_status()` first** if unsure about opt-in (instant, no API call).
+2. **ALWAYS use `codebase_search` first** for every code search (once opted in).
+3. If no results, **rephrase your query** and try again before falling back.
+4. Only after `codebase_search` fails with rephrased queries, use `grep`, `glob`, or `find`.
+5. **Do not use both simultaneously** — try search first, fall back only if needed.
 
 ### Rationalization Table
 
@@ -37,7 +44,7 @@ grep / glob / find              ← ONLY as last resort
 | "I know the exact function name, grep is faster" | `codebase_search` finds it AND shows related code grep misses |
 | "This is just a quick lookup" | Quick lookups benefit most from semantic search |
 | "I need ALL occurrences" | Valid fallback case — but try `codebase_search` first |
-| "The codebase isn't indexed yet" | Auto-indexes on first tool use. Just call `codebase_search`. |
+| "The codebase isn't indexed yet" | Call `codebase_status()` first — auto-index on first use handles it |
 | "I'm not sure what to search for" | Semantic search handles vague queries better than grep |
 | "Grep is more reliable" | Hash-cached index with file watching. Always fresh. |
 | "Let me just grep first to see what's there" | This is the #1 violation. Use `codebase_search` first. |
@@ -49,6 +56,30 @@ grep / glob / find              ← ONLY as last resort
 - Thinking "let me just grep first to see what's there"
 - Not sure what to search for (semantic search handles vague queries)
 - Question is about **behavior** ("how does X work?") not text matching
+
+---
+
+## New Project Flow — Check Status FIRST ⚠️
+
+When entering a project where you don't know if indexing is set up:
+
+```
+codebase_status()               ← ALWAYS first — instant, free, no API call
+    ↓
+Not opted in? → Tell user: touch .codebase-index to enable
+    ↓
+Opted in, no index? → codebase_index() (auto-index on first use handles this)
+    ↓
+Opted in, index ready? → codebase_search("your query")
+```
+
+**Why `codebase_status` first?** `codebase_search` on a non-opted-in project fails immediately. `codebase_status` is a single call that tells you everything: opt-in status, block count, storage backend. No embedding API waste. One call instead of N parallel failures.
+
+**Key behaviors:**
+- Auto-indexing triggers on first `codebase_search` or `codebase_status` call in an opted-in project
+- After auto-index, search immediately — no extra `codebase_index` call needed
+- If auto-index fails (e.g., embedding API down), the tool returns an error — try `codebase_index(force=true)` later
+- The file watcher keeps the index current as you edit — re-indexing is incremental (hash-cached)
 
 ---
 
