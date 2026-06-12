@@ -17,12 +17,15 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
+  "overrides": {
+    "tree-sitter": "^0.25.0"
+  },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.14.0"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
-    "apache-arrow": "^21.1.0",
+    "apache-arrow": "^18.1.0",
     "better-sqlite3": "^12.10.0",
     "chokidar": "^5.0.0",
     "glob": "^11.0.0",
