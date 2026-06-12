@@ -90,6 +90,9 @@ const MIN_BLOCK_CHARS = 100
 const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_MAX_FILE_SIZE = 1_000_000
 
+/** Bump this when the indexing logic changes (forces re-index of all files) */
+const INDEXER_VERSION = 2
+
 const IGNORE = [
   "**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**",
   "**/.next/**", "**/vendor/**", "**/__pycache__/**", "**/.venv/**",
@@ -640,6 +643,37 @@ function createQdrantStore(qdrantUrl: string, colName: string, apiKey?: string):
 
 // ─── Parser ───────────────────────────────────────────────
 
+// ─── Vue SFC Script Extraction ──────────────────────────────
+
+/**
+ * Extract the <script> block from a Vue SFC file for tree-sitter parsing.
+ * Supports: <script>, <script setup>, <script lang="ts">, <script setup lang="ts">
+ * Returns the script content, line offset (mapping back to original .vue), and language.
+ */
+function extractVueScript(content: string): { scriptContent: string; scriptStartLine: number; lang: string } | null {
+  const openMatch = content.match(/<script\b([^>]*)>/i)
+  if (!openMatch) return null
+
+  const tagBody = openMatch[1] ?? ""
+  const openIndex = openMatch.index!
+  const openTag = openMatch[0]
+  const openEnd = openIndex + openTag.length
+
+  const closeMatch = content.indexOf("</script>", openEnd)
+  if (closeMatch === -1) return null
+
+  const scriptContent = content.slice(openEnd, closeMatch)
+  if (scriptContent.trim().length < MIN_BLOCK_CHARS) return null
+
+  const langMatch = tagBody.match(/\blang\s*=\s*["']([^"']+)["']/i)
+  const lang = langMatch && (langMatch[1] === "ts" || langMatch[1] === "typescript") ? ".ts" : ".js"
+
+  const before = content.slice(0, openIndex)
+  const scriptStartLine = before.split("\n").length
+
+  return { scriptContent, scriptStartLine, lang }
+}
+
 /**
  * Parse a file into code blocks. Tries tree-sitter AST parsing first
  * for supported languages (TS, JS, Python, PHP); falls back to
@@ -652,6 +686,26 @@ async function parseFile(filePath: string, root: string, maxSize: number): Promi
 
     const content = buf.toString("utf-8")
     const ext = extname(filePath)
+
+    // Vue SFC: extract <script> block and parse with JS/TS tree-sitter
+    if (ext === ".vue") {
+      const extracted = extractVueScript(content)
+      if (extracted) {
+        const { scriptContent, scriptStartLine, lang } = extracted
+        const tsBlocks = await parseFileWithTreeSitter(filePath, scriptContent, lang, root)
+        if (tsBlocks && tsBlocks.length > 0) {
+          // Offset line numbers to be relative to the original .vue file
+          const lineOffset = scriptStartLine - 1
+          for (const b of tsBlocks) {
+            b.startLine += lineOffset
+            b.endLine += lineOffset
+            b.language = "vue" // preserve Vue language marker
+          }
+          return tsBlocks
+        }
+      }
+      // No script block or tree-sitter produced nothing — fall through to line-based
+    }
 
     // Try tree-sitter first for supported extensions
     if (TS_EXTENSIONS.has(ext)) {
@@ -830,7 +884,7 @@ export class CodebaseIndexer {
       try {
         const buf = readFileSync(file)
         if (buf.length <= this.maxFileSize) {
-          fileHash = sha256(buf.toString("utf-8"))
+          fileHash = sha256(INDEXER_VERSION + ":" + buf.toString("utf-8"))
         }
       } catch { /* unreadable — skip */ }
 
@@ -966,7 +1020,7 @@ export class CodebaseIndexer {
     try {
       const buf = readFileSync(filePath)
       if (buf.length <= this.maxFileSize) {
-        fileHash = sha256(buf.toString("utf-8"))
+        fileHash = sha256(INDEXER_VERSION + ":" + buf.toString("utf-8"))
       }
     } catch { return { blocks: 0 } }
 
