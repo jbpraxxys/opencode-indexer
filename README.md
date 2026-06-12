@@ -1,7 +1,7 @@
 # OpenCode Indexer
 
 <p align="center">
-  <img src="opencode-indexer-banner.png" alt="OpenCode Indexer" width="600">
+  <img src="banner.png" alt="OpenCode Indexer" width="600">
 </p>
 
 **Semantic code search for OpenCode** — a plugin that indexes your project's source code into a vector database and enables the AI agent to search it using natural language. Tree-sitter AST parsing produces clean semantic blocks (functions, classes, methods). Hash caching skips unchanged files on re-index — fast incremental updates.
