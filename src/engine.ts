@@ -372,13 +372,21 @@ interface Embedder {
 
 // ─── Ollama Embedder ─────────────────────────────────────
 
+const OLLAMA_MAX_CHARS = 7000 // nomic-embed-text has 8192 token context; be conservative
+
+function ollamaTruncate(text: string): string {
+  if (text.length <= OLLAMA_MAX_CHARS) return text
+  return text.slice(0, OLLAMA_MAX_CHARS) + "\n// [truncated]"
+}
+
 function createOllamaEmbedder(ollamaUrl: string, model: string): Embedder {
   const ollama = new Ollama({ host: ollamaUrl })
   let cachedDim: number | null = null
 
   return {
     async embed(texts: string[]) {
-      const res = await ollama.embed({ model, input: texts })
+      const truncated = texts.map(ollamaTruncate)
+      const res = await ollama.embed({ model, input: truncated })
       return res.embeddings
     },
     async dimension() {
@@ -392,7 +400,7 @@ function createOllamaEmbedder(ollamaUrl: string, model: string): Embedder {
 
 // ─── OpenAI-Compatible Embedder ──────────────────────────
 
-const MAX_INPUT_CHARS = 20000 // well under 8192 tokens (~4 chars/token for code)
+const MAX_INPUT_CHARS = 8000 // safe under 8192 tokens even for dense code (~1 char/token worst case)
 
 function truncateText(text: string): string {
   if (text.length <= MAX_INPUT_CHARS) return text
@@ -756,31 +764,45 @@ function parseFileLineBased(
   let current: string[] = []
   let startLine = 1
 
+  function emitBlock(text: string, endLine: number) {
+    // Guard: ensure text never exceeds MAX_BLOCK_CHARS * 2 (safety cap)
+    // to prevent giant blocks from exceeding embedding token limits
+    if (text.length > MAX_BLOCK_CHARS) {
+      // Split overly large text (e.g. very long single lines) into chunks
+      for (let pos = 0; pos < text.length; pos += MAX_BLOCK_CHARS) {
+        const chunk = text.slice(pos, pos + MAX_BLOCK_CHARS)
+        if (chunk.trim().length < MIN_BLOCK_CHARS) continue
+        const hash = sha256(chunk)
+        blocks.push({
+          id: uuidv5(`${relPath}:${startLine}:${hash}`, BLOCK_NAMESPACE),
+          filePath, relativePath: relPath, content: chunk,
+          startLine, endLine, language, hash,
+        })
+      }
+      return
+    }
+
+    if (text.trim().length < MIN_BLOCK_CHARS) return
+    const hash = sha256(text)
+    blocks.push({
+      id: uuidv5(`${relPath}:${startLine}:${hash}`, BLOCK_NAMESPACE),
+      filePath, relativePath: relPath, content: text,
+      startLine, endLine, language, hash,
+    })
+  }
+
   for (let i = 0; i < lines.length; i++) {
     current.push(lines[i])
     const text = current.join("\n")
     if (text.length >= MAX_BLOCK_CHARS) {
-      const hash = sha256(text)
-      blocks.push({
-        id: uuidv5(`${relPath}:${startLine}:${hash}`, BLOCK_NAMESPACE),
-        filePath, relativePath: relPath, content: text,
-        startLine, endLine: i + 1, language, hash,
-      })
+      emitBlock(text, i + 1)
       current = []
       startLine = i + 2
     }
   }
 
   if (current.length > 0) {
-    const text = current.join("\n")
-    if (text.trim().length >= MIN_BLOCK_CHARS) {
-      const hash = sha256(text)
-      blocks.push({
-        id: uuidv5(`${relPath}:${startLine}:${hash}`, BLOCK_NAMESPACE),
-        filePath, relativePath: relPath, content: text,
-        startLine, endLine: lines.length, language, hash,
-      })
-    }
+    emitBlock(current.join("\n"), lines.length)
   }
 
   return blocks
