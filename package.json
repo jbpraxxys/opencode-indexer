@@ -7,7 +7,14 @@
     "type": "git",
     "url": "https://github.com/jbpraxxys/opencode-indexer.git"
   },
-  "keywords": ["opencode", "code-search", "vector-search", "lancedb", "tree-sitter", "ai-tools"],
+  "keywords": [
+    "opencode",
+    "code-search",
+    "vector-search",
+    "lancedb",
+    "tree-sitter",
+    "ai-tools"
+  ],
   "main": "dist/index.js",
   "exports": {
     ".": {
@@ -47,9 +54,13 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.14.0",
+    "@opentui/core": "^0.3.4",
+    "@opentui/keymap": "^0.3.4",
+    "@opentui/solid": "^0.3.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
+    "solid-js": "^1.9.12",
     "typescript": "^5.7.0"
   }
 }
