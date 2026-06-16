@@ -4,7 +4,7 @@
   <img src="banner.png" alt="OpenCode Indexer" width="600">
 </p>
 
-**Semantic code search for OpenCode** — a plugin that indexes your project's source code into a vector database and enables the AI agent to search it using natural language. Tree-sitter AST parsing produces clean semantic blocks (functions, classes, methods). Hash caching skips unchanged files on re-index — fast incremental updates.
+**Semantic code search for OpenCode** — a plugin that indexes your project's source code into a vector database and enables the AI agent to search it using natural language. Tree-sitter AST parsing produces clean semantic blocks (functions, classes, methods). Hash caching skips unchanged files on re-index — fast incremental updates. A live TUI sidebar shows real-time indexing progress with themed colors.
 
 Instead of grepping for exact keywords, ask "how does authentication work" and find relevant code across your entire project.
 
@@ -148,16 +148,17 @@ flowchart TB
 
 ## What's New
 
-| Feature                          | Description                                                                                  |
-| -------------------------------- | -------------------------------------------------------------------------------------------- |
-| **Zero-Dependency LanceDB**      | Embedded vector store — no server, no Docker, no API key (default)                           |
-| **Tree-sitter AST Parsing**      | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP      |
-| **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                           |
-| **Branch-Aware Indexing**        | Polls `.git/HEAD` every 3s — auto re-indexes on branch switch (opt-in)                       |
-| **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)       |
-| **Progress File**                | Real-time indexing progress (phase, percentage, counts) stored in `.codebase-index-store/`   |
-| **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                                 |
-| **Consolidated Storage**         | Single `.codebase-index-store/` folder — LanceDB, progress, and branch tracking in one place |
+| Feature                          | Description                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Live TUI Sidebar**             | Real-time progress bar, phase label, file/block counts — themed colors, no console noise        |
+| **Zero-Dependency LanceDB**      | Embedded vector store — no server, no Docker, no API key (default)                              |
+| **Tree-sitter AST Parsing**      | Extracts functions, classes, and methods as semantic blocks for TS, JS, Python, and PHP         |
+| **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                              |
+| **Branch-Aware Indexing**        | Polls `.git/HEAD` every 3s — auto re-indexes on branch switch (opt-in)                          |
+| **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)          |
+| **Progress File**                | Real-time indexing progress (phase, percentage, counts) written to `.codebase-index-store/`     |
+| **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                                    |
+| **Consolidated Storage**         | Single `.codebase-index-store/` folder — LanceDB, progress, and branch tracking in one place    |
 
 ---
 
@@ -204,6 +205,24 @@ Three tools available to the AI agent:
 
 The agent follows a **Search Priority Rule**: checks `codebase_status` first (instant, free), then uses `codebase_search` for all code search, falling back to grep/glob only if semantic search returns no results. This prevents wasted calls on non-opted-in projects. The agent skill (step 5 above) reinforces this rule with a rationalization table and red flags — install it so the agent never reaches for grep first.
 
+### TUI Sidebar
+
+When indexing, a live sidebar panel appears showing real-time progress:
+
+```
+⚡ Codebase Index
+██████░░░░░░░░░░░░░░ 45%
+embedding
+299 files · 200 blocks
+```
+
+- **Progress bar** — `█` filled, `░` unfilled, with percentage
+- **Phase label** — color-coded: muted for idle, accent for active, green for done
+- **Stats** — file and block counts in muted text
+- **Last indexed** — shown when available
+
+The sidebar polls a progress file (`.codebase-index-store/progress.json`) every 2 seconds. The engine writes phase, percentage, and counts during scanning, parsing, embedding, and saving phases. No console.log noise.
+
 ### Auto-Indexing (File Watcher + Branch Detection)
 
 When OpenCode runs in an opted-in project, two mechanisms keep the index fresh:
@@ -224,8 +243,7 @@ Reads `.git/HEAD` directly (no subprocess) — poll interval configurable via `b
 | ----------------- | ------------------------------------------------------ |
 | Switch branches   | Full re-index (hash cache — unchanged = free)          |
 | Detached HEAD     | Polling suspends until back on a named branch          |
-| Change detected   | Logs `🔄 Branch changed: X → Y` to console             |
-| Re-index complete | Logs `✅ Re-indexed for branch X (N files → M blocks)` |
+| Change detected   | Re-indexes silently — TUI sidebar reflects live state  |
 | Poll failure      | Logs error to console, retries next interval           |
 
 No full re-index. No API waste. Just the delta.
@@ -316,11 +334,11 @@ Each project gets its own vector store collection/table (`idx_<sha256>`). All in
 ├── dist/
 │   ├── engine.js        # Core: parser, embedder, vector store, hash cache
 │   ├── index.js         # Server plugin: 3 tools + watcher + system prompt
-│   └── tui.js           # TUI plugin: presence marker
+│   └── tui.js           # TUI plugin: sidebar progress bar + state display
 ├── src/
-│   ├── engine.ts        # Tree-sitter, hash caching, progress, Qdrant/LanceDB
+│   ├── engine.ts        # Tree-sitter, hash caching, progress file, Qdrant/LanceDB
 │   ├── index.ts         # Plugin entry: tools, chokidar watcher, priority rule
-│   └── tui.ts           # TUI entry (kv presence flag)
+│   └── tui.tsx          # TUI sidebar: themed progress bar, phase label, stats
 ├── skills/
 │   └── opencode-indexer/
 │       └── SKILL.md     # Agent skill — enforces search priority rule
