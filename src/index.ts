@@ -149,11 +149,8 @@ function makeCodebaseIndex(pluginConfig: IndexerConfig) {
                 }
             }
 
-            const { files, blocks } = await indexer.index(ctx.directory, (msg) => {
-                // Show only phase-change messages during indexing
-                if (msg.startsWith('🔍') || msg.startsWith('⚡') || msg.startsWith('💾') || msg.startsWith('✅ Done')) {
-                    console.log(msg);
-                }
+            const { files, blocks } = await indexer.index(ctx.directory, () => {
+                // TUI sidebar reads live progress from progress file — textarea output is suppressed
             });
 
             // Write state for TUI sidebar
@@ -535,7 +532,7 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
                 if (!current || current === lastBranch) return;
 
                 // Branch change detected — full re-index with hash caching
-                console.log(`🔄 Branch changed: ${String(lastBranch)} → ${current} — re-indexing...`);
+                // TUI sidebar reads live progress from progress file — no console.log needed
                 const idx = getIndexer(projectDir, pluginConfig);
                 await idx.ensureReady();
                 await idx.init();
@@ -544,8 +541,7 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
                 // even if indexing fails partway through (next run fixes it)
                 lastBranch = current;
 
-                const result = await idx.index(projectDir);
-                console.log(`✅ Re-indexed for branch ${current} (${result.files} files → ${result.blocks} blocks)`);
+                await idx.index(projectDir);
             } catch (err: any) {
                 console.error(`⚠ Branch poll error:`, err.message ?? err);
             }
@@ -642,7 +638,7 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         dispose: async () => {
             if (watcher) {
                 await watcher.close();
-                console.log('File watcher stopped');
+                // File watcher stopped silently — TUI sidebar reflects state
             }
             if (branchInterval) {
                 clearInterval(branchInterval);

@@ -21,10 +21,7 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
-    "./tui": {
-      "import": "./dist/tui.js",
-      "types": "./dist/tui.d.ts"
-    }
+    "./tui": "./src/tui.tsx"
   },
   "scripts": {
     "build": "tsc",
@@ -33,17 +30,18 @@
   "overrides": {
     "tree-sitter": "^0.25.0"
   },
-  "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.14.0"
-  },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
+    "@opencode-ai/plugin": "^1.14.0",
+    "@opentui/core": "^0.3.4",
+    "@opentui/solid": "^0.3.4",
     "apache-arrow": "^18.1.0",
     "better-sqlite3": "^12.10.0",
     "chokidar": "^5.0.0",
     "glob": "^11.0.0",
     "ignore": "^7.0.5",
     "ollama": "^0.5.0",
+    "solid-js": "^1.9.12",
     "tree-sitter": "^0.25.0",
     "tree-sitter-javascript": "^0.25.0",
     "tree-sitter-php": "^0.24.2",
@@ -53,10 +51,6 @@
     "web-tree-sitter": "^0.26.9"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.14.0",
-    "@opentui/core": "^0.3.4",
-    "@opentui/keymap": "^0.3.4",
-    "@opentui/solid": "^0.3.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",

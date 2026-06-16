@@ -79,6 +79,14 @@ export interface ProgressState {
   total: number
   percentage: number
   updatedAt: string
+  /** Files scanned so far (for TUI sidebar display) */
+  files?: number
+  /** Code blocks indexed (for TUI sidebar display) */
+  blocks?: number
+  /** Vector DB path (for TUI sidebar display) */
+  dbPath?: string
+  /** ISO timestamp of last completed index (for TUI sidebar display) */
+  lastIndexed?: string | null
 }
 
 // ─── Constants ────────────────────────────────────────────
@@ -877,13 +885,13 @@ export class CodebaseIndexer {
   async index(workspaceRoot: string, onProgress?: (msg: string) => void): Promise<{ files: number; blocks: number; skipped: number }> {
     if (!this.store) throw new Error("Call init() first")
 
-    const log = onProgress || ((msg: string) => console.log(msg))
+    const log = onProgress || (() => {})
     const progress = (state: ProgressState) => {
       writeProgressFile(workspaceRoot, state)
     }
 
     // Phase: scanning
-    progress({ phase: "scanning", message: "Scanning files...", current: 0, total: 0, percentage: 0, updatedAt: "" })
+    progress({ phase: "scanning", message: "Scanning files...", current: 0, total: 0, percentage: 0, updatedAt: "", files: 0, blocks: 0, dbPath: this.store?.getDbPath(), lastIndexed: null })
     log("🔍 Scanning files...")
     const projectIgnore = loadProjectIgnore(workspaceRoot)
 
@@ -909,7 +917,7 @@ export class CodebaseIndexer {
     const storedFiles = new Set(await this.store.listStoredFiles())
 
     // Phase: parsing (with hash caching)
-    progress({ phase: "parsing", message: "Parsing files...", current: 0, total: indexable.length, percentage: 0, updatedAt: "" })
+    progress({ phase: "parsing", message: "Parsing files...", current: 0, total: indexable.length, percentage: 0, updatedAt: "", files: 0, blocks: 0, dbPath: this.store?.getDbPath(), lastIndexed: null })
     const allBlocks: any[] = []
     let skippedCount = 0
     let parsedCount = 0
@@ -945,6 +953,9 @@ export class CodebaseIndexer {
               total: totalFiles,
               percentage: Math.round(((fi + 1) / totalFiles) * 100),
               updatedAt: "",
+              files: fi + 1,
+              blocks: allBlocks.length,
+              dbPath: this.store?.getDbPath(),
             })
           }
           continue
@@ -973,6 +984,9 @@ export class CodebaseIndexer {
           total: totalFiles,
           percentage: Math.round(((fi + 1) / totalFiles) * 100),
           updatedAt: "",
+          files: fi + 1,
+          blocks: allBlocks.length,
+          dbPath: this.store?.getDbPath(),
         })
       }
     }
@@ -987,19 +1001,19 @@ export class CodebaseIndexer {
 
     if (allBlocks.length === 0 && parsedCount === 0 && skippedCount > 0) {
       log(`✅ All ${skippedCount} files unchanged — index is up to date`)
-      progress({ phase: "done", message: "Index up to date", current: totalFiles, total: totalFiles, percentage: 100, updatedAt: "" })
+      progress({ phase: "done", message: "Index up to date", current: totalFiles, total: totalFiles, percentage: 100, updatedAt: "", files: indexable.length, blocks: await this.store.count(), dbPath: this.store?.getDbPath(), lastIndexed: new Date().toISOString() })
       return { files: indexable.length, blocks: await this.store.count(), skipped: skippedCount }
     }
 
     if (allBlocks.length === 0) {
       log("⚠ No code blocks generated from changed files")
-      progress({ phase: "done", message: "No code blocks generated", current: totalFiles, total: totalFiles, percentage: 100, updatedAt: "" })
+      progress({ phase: "done", message: "No code blocks generated", current: totalFiles, total: totalFiles, percentage: 100, updatedAt: "", files: indexable.length, blocks: await this.store.count(), dbPath: this.store?.getDbPath(), lastIndexed: new Date().toISOString() })
       return { files: indexable.length, blocks: await this.store.count(), skipped: skippedCount }
     }
 
     // Phase: embedding
     log(`⚡ Embedding ${allBlocks.length} blocks in batches of ${this.batchSize}...`)
-    progress({ phase: "embedding", message: "Embedding code blocks...", current: 0, total: allBlocks.length, percentage: 0, updatedAt: "" })
+    progress({ phase: "embedding", message: "Embedding code blocks...", current: 0, total: allBlocks.length, percentage: 0, updatedAt: "", files: indexable.length, blocks: 0, dbPath: this.store?.getDbPath() })
     const totalBatches = Math.ceil(allBlocks.length / this.batchSize)
     const allRows: any[] = []
 
@@ -1020,13 +1034,16 @@ export class CodebaseIndexer {
         total: allBlocks.length,
         percentage: Math.round((allRows.length / allBlocks.length) * 100),
         updatedAt: "",
+        files: indexable.length,
+        blocks: allRows.length,
+        dbPath: this.store?.getDbPath(),
       })
     }
 
     // Phase: saving (upsertPoints — append, don't wipe existing unchanged blocks)
     const storeLabel = this.storeType === "lancedb" ? "LanceDB" : "Qdrant"
     log(`💾 Saving ${allRows.length} vectors to ${storeLabel}...`)
-    progress({ phase: "saving", message: "Saving vectors...", current: allRows.length, total: allRows.length, percentage: 95, updatedAt: "" })
+    progress({ phase: "saving", message: "Saving vectors...", current: allRows.length, total: allRows.length, percentage: 95, updatedAt: "", files: indexable.length, blocks: allRows.length, dbPath: this.store?.getDbPath() })
 
     // Use upsertPoints (append) instead of upsertBatch (wipe-and-replace)
     // because unchanged files' blocks are still in the store
@@ -1038,7 +1055,7 @@ export class CodebaseIndexer {
     const totalBlocks = await this.store.count()
     const doneMsg = `✅ Done — ${indexable.length} files scanned: ${skippedCount} unchanged, ${parsedCount} updated → ${totalBlocks} blocks total`
     log(doneMsg)
-    progress({ phase: "done", message: doneMsg, current: totalBlocks, total: totalBlocks, percentage: 100, updatedAt: "" })
+    progress({ phase: "done", message: doneMsg, current: totalBlocks, total: totalBlocks, percentage: 100, updatedAt: "", files: indexable.length, blocks: totalBlocks, dbPath: this.store?.getDbPath(), lastIndexed: new Date().toISOString() })
 
     // Track branch if branchAware is enabled
     if (this.branchAware) {
@@ -1051,7 +1068,7 @@ export class CodebaseIndexer {
 
   async indexFile(filePath: string, onProgress?: (msg: string) => void): Promise<{ blocks: number }> {
     if (!this.store) throw new Error("Call init() first")
-    const log = onProgress || ((msg: string) => console.log(msg))
+    const log = onProgress || (() => {})
 
     const ext = extname(filePath)
     if (!EXTENSIONS.has(ext)) return { blocks: 0 }

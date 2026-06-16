@@ -1,167 +1,128 @@
 /** @jsxImportSource @opentui/solid */
-import { createSignal, createEffect, onCleanup, Show, type JSX } from "solid-js"
-import type { TuiPlugin } from "@opencode-ai/plugin/tui"
-import { existsSync, readFileSync } from "fs"
-import { join } from "path"
+import { createSignal, Show } from "solid-js"
+import { TextAttributes } from "@opentui/core"
+import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 
-// ─── State shape ──────────────────────────────────────────
+const BAR_WIDTH = 20
 
-interface IndexerState {
-  status: "idle" | "indexing" | "ready" | "error"
-  files: number
-  blocks: number
-  dbPath: string
-  lastIndexed: string | null
+/**
+ * Engine writes live progress to .codebase-index-store/progress.json during indexing.
+ * After indexing, server writes final state to .opencode/state/opencode-indexer/state.json.
+ * We read the progress file first (live updates), fall back to state file (persisted data).
+ */
+interface ProgressState {
   phase: string
-  progress: number
+  message?: string
+  percentage?: number
+  files?: number
+  blocks?: number
+  lastIndexed?: string | null
+  status?: string
+  progress?: number
 }
 
-const DEFAULT_STATE: IndexerState = {
-  status: "idle",
-  files: 0,
-  blocks: 0,
-  dbPath: "",
-  lastIndexed: null,
-  phase: "idle",
-  progress: 0,
+function progressFilePath(projectDir: string): string {
+  return join(projectDir, ".codebase-index-store", "progress.json")
 }
 
-function stateFilePath(directory: string): string {
-  return join(directory, ".opencode", "state", "opencode-indexer", "state.json")
+function stateFilePath(projectDir: string): string {
+  return join(projectDir, ".opencode", "state", "opencode-indexer", "state.json")
 }
 
-function readState(directory: string | null): IndexerState {
-  if (!directory) return DEFAULT_STATE
-  const path = stateFilePath(directory)
-  if (!existsSync(path)) return DEFAULT_STATE
+function readState(projectDir: string): ProgressState | null {
+  // Prefer live progress file during indexing, fall back to state file for persisted data
+  const progressP = progressFilePath(projectDir)
   try {
-    const raw = readFileSync(path, "utf-8")
-    return { ...DEFAULT_STATE, ...JSON.parse(raw) }
-  } catch {
-    return DEFAULT_STATE
+    if (existsSync(progressP)) return JSON.parse(readFileSync(progressP, "utf-8"))
+  } catch { /* ignore */ }
+
+  const stateP = stateFilePath(projectDir)
+  try {
+    if (existsSync(stateP)) return JSON.parse(readFileSync(stateP, "utf-8"))
+  } catch { /* ignore */ }
+
+  return null
+}
+
+function buildBar(percent: number): { bar: string; clamped: number } {
+  const clamped = Math.max(0, Math.min(100, percent))
+  const filled = Math.max(0, Math.min(BAR_WIDTH, Math.round((clamped / 100) * BAR_WIDTH)))
+  return {
+    bar: `${"█".repeat(filled)}${"░".repeat(BAR_WIDTH - filled)}`,
+    clamped,
   }
 }
 
-// ─── Color helpers ─────────────────────────────────────────
+function View(props: { api: TuiPluginApi; sessionID: string }) {
+  const [data, setData] = createSignal<ProgressState | null>(null)
 
-// These escape codes work in OpenCode's TUI terminal renderer
-const COLORS = {
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  red: "\x1b[31m",
-  dim: "\x1b[2m",
-  bold: "\x1b[1m",
-  reset: "\x1b[0m",
-}
+  const projectDir = props.api.state.path.directory?.trim() || process.cwd()
 
-function statusIndicator(state: IndexerState): string {
-  switch (state.status) {
-    case "ready":
-      return `${COLORS.green}●${COLORS.reset} Ready`
-    case "indexing":
-      return `${COLORS.yellow}●${COLORS.reset} Indexing`
-    case "error":
-      return `${COLORS.red}●${COLORS.reset} Error`
-    default:
-      return `${COLORS.dim}○${COLORS.reset} Idle`
+  const poll = () => {
+    try {
+      setData(readState(projectDir))
+    } catch { /* best-effort */ }
   }
-}
+  poll()
+  const interval = setInterval(poll, 2000)
 
-function formatTime(iso: string | null): string {
-  if (!iso) return "—"
-  const d = new Date(iso)
-  const now = new Date()
-  const diffMs = now.getTime() - d.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
+  const theme = () => props.api.theme.current
 
-  if (diffMin < 1) return "just now"
-  if (diffMin < 60) return `${diffMin}m ago`
-  const diffH = Math.floor(diffMin / 60)
-  if (diffH < 24) return `${diffH}h ago`
-  return d.toLocaleDateString()
-}
+  const phaseLabel = () => {
+    const d = data()
+    if (!d) return "idle"
+    return d.phase || d.status || "idle"
+  }
 
-function progressBar(pct: number, width = 10): string {
-  const filled = Math.round((pct / 100) * width)
-  return "█".repeat(filled) + "░".repeat(width - filled)
-}
+  const pct = () => {
+    const d = data()
+    const p = d?.percentage ?? d?.progress ?? 0
+    const bar = buildBar(p)
+    return { bar: bar.bar, percent: bar.clamped }
+  }
 
-// ─── Sidebar component ────────────────────────────────────
+  const phaseColor = () => {
+    const label = phaseLabel()
+    if (label === "done") return theme().success
+    if (label === "idle") return theme().textMuted
+    return theme().accent
+  }
 
-interface SidebarProps {
-  directory: string | null
-}
-
-function Sidebar(props: SidebarProps): JSX.Element {
-  const [state, setState] = createSignal<IndexerState>(DEFAULT_STATE)
-
-  // Poll state file every 3 seconds
-  createEffect(() => {
-    const interval = setInterval(() => {
-      setState(readState(props.directory))
-    }, 3000)
-
-    // Immediate first read
-    setState(readState(props.directory))
-
-    onCleanup(() => clearInterval(interval))
-  })
-
-  const s = state()
+  const fileCount = () => data()?.files ?? 0
+  const blockCount = () => data()?.blocks ?? 0
+  const lastIndexed = () => data()?.lastIndexed || ""
 
   return (
-    <div>
-      {/* Header */}
-      <div>
-        {COLORS.bold}Codebase Index{COLORS.reset}
-      </div>
-
-      {/* Status row */}
-      <div>  {statusIndicator(s)}</div>
-
-      {/* Progress bar (only during indexing) */}
-      <Show when={s.status === "indexing"}>
-        <div>  [{progressBar(s.progress)}] {s.progress}%</div>
+    <box flexDirection="column">
+      <text attributes={TextAttributes.BOLD}>⚡ Codebase Index</text>
+      <text>{`${pct().bar} ${pct().percent}%`}</text>
+      <text fg={phaseColor()}>{phaseLabel()}</text>
+      <text fg={theme().textMuted}>{`${fileCount()} files · ${blockCount()} blocks`}</text>
+      <Show when={lastIndexed()}>
+        <text>{`Last: ${lastIndexed()}`}</text>
       </Show>
-
-      {/* Stats */}
-      <div>  {COLORS.dim}Blocks:{COLORS.reset} {s.blocks}</div>
-      <div>  {COLORS.dim}Files:{COLORS.reset} {s.files}</div>
-
-      {/* Storage backend */}
-      <Show when={s.dbPath}>
-        <div>  {COLORS.dim}DB:{COLORS.reset} {s.dbPath}</div>
-      </Show>
-
-      {/* Last indexed */}
-      <Show when={s.lastIndexed}>
-        <div>  {COLORS.dim}Indexed:{COLORS.reset} {formatTime(s.lastIndexed)}</div>
-      </Show>
-
-      {/* Spacer */}
-      <div> </div>
-    </div>
+    </box>
   )
 }
 
-// ─── TUI Plugin ────────────────────────────────────────────
-
-const id = "opencode-indexer" as const
-
 const tui: TuiPlugin = async (api) => {
-  // Register sidebar_content slot
-  api.slots.register({
-    order: 350,
+  const { slots } = api
+
+  slots.register({
+    order: 50,
     slots: {
-      sidebar_content: (_ctx, props) => {
-        // Resolve the project directory from the session
-        // The TUI plugin has limited directory info — we read from
-        // api.state.path.directory which is the current project dir
-        const dir = api.state.path.directory ?? null
-        return <Sidebar directory={dir} />
+      sidebar_content(_ctx: any, props: any) {
+        return <View api={api} sessionID={props?.session_id} />
       },
     },
   })
 }
 
-export default { id, tui }
+const plugin: TuiPluginModule & { id: string } = {
+  id: "opencode-indexer",
+  tui,
+}
+
+export default plugin
