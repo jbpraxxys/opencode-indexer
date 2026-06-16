@@ -90,6 +90,18 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
     return theme().accent
   }
 
+  const formatTime = (iso: string): string => {
+    const d = new Date(iso)
+    const now = Date.now()
+    const diffMs = now - d.getTime()
+    const diffMin = Math.floor(diffMs / 60000)
+    if (diffMin < 1) return "just now"
+    if (diffMin < 60) return `${diffMin}m ago`
+    const diffH = Math.floor(diffMin / 60)
+    if (diffH < 24) return `${diffH}h ago`
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+  }
+
   const fileCount = () => data()?.files ?? 0
   const blockCount = () => data()?.blocks ?? 0
   const lastIndexed = () => data()?.lastIndexed || ""
@@ -101,7 +113,7 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
       <text fg={phaseColor()}>{phaseLabel()}</text>
       <text fg={theme().textMuted}>{`${fileCount()} files · ${blockCount()} blocks`}</text>
       <Show when={lastIndexed()}>
-        <text>{`Last: ${lastIndexed()}`}</text>
+        <text>{`Last: ${formatTime(lastIndexed())}`}</text>
       </Show>
     </box>
   )
