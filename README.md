@@ -21,7 +21,7 @@ npm install
 npm run build
 ```
 
-### 2. Configure
+### 2. Configure — Server (tools)
 
 Add to `~/.config/opencode/opencode.json`:
 
@@ -35,16 +35,32 @@ Add to `~/.config/opencode/opencode.json`:
 ]
 ```
 
+This registers the three tools (`codebase_index`, `codebase_search`, `codebase_status`) with the OpenCode agent.
+
+### 3. Configure — TUI Sidebar
+
+The TUI sidebar panel (live indexing progress bar, phase label, file/block counts) is a separate plugin entry. Without it, indexing still works but you won't see progress in the sidebar.
+
+Add to `~/.config/opencode/tui.json`:
+
+```json
+"plugin": [
+    "~/opencode-indexer"
+]
+```
+
+The TUI loader resolves the directory and picks up `./src/tui.tsx` via the `package.json` exports — no extra configuration needed.
+
 That's it — LanceDB is the default vector store (zero setup). No server, no Docker.
 
-### 3. Opt in a project
+### 4. Opt in a project
 
 ```bash
 cd ~/Sites/my-project
 touch .codebase-index
 ```
 
-### 4. Restart OpenCode and start searching
+### 5. Restart OpenCode and start searching
 
 ```
 opencode ~/Sites/my-project
@@ -58,7 +74,7 @@ You: codebase_search "how does user login work"
 Agent: [Instantly finds auth-related code across your project...]
 ```
 
-### 5. Install the agent skill (strongly recommended)
+### 6. Install the agent skill (strongly recommended)
 
 The skill tells the AI agent to **check `codebase_status` first** (free, no API call), then **always use `codebase_search`** before falling back to grep/glob/find. Without it, the agent may waste context on regex searches or make parallel search calls into non-opted-in projects:
 
@@ -156,7 +172,7 @@ flowchart TB
 | **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                              |
 | **Branch-Aware Indexing**        | Polls `.git/HEAD` every 3s — auto re-indexes on branch switch (opt-in)                          |
 | **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)          |
-| **Progress File**                | Real-time indexing progress (phase, percentage, counts) written to `.codebase-index-store/`     |
+|| **Progress File**                | Live progress (phase, percentage, counts) written to `.codebase-index-store/progress.json` during indexing; persisted state written to `.opencode/state/opencode-indexer/state.json` after completion     |
 | **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                                    |
 | **Consolidated Storage**         | Single `.codebase-index-store/` folder — LanceDB, progress, and branch tracking in one place    |
 
@@ -221,7 +237,7 @@ embedding
 - **Stats** — file and block counts in muted text
 - **Last indexed** — shown when available
 
-The sidebar polls a progress file (`.codebase-index-store/progress.json`) every 2 seconds. The engine writes phase, percentage, and counts during scanning, parsing, embedding, and saving phases. No console.log noise.
+The sidebar polls for live progress (`.codebase-index-store/progress.json`, written by the engine during indexing) and falls back to the persisted state file (`.opencode/state/opencode-indexer/state.json`, written by the server after completion) every 2 seconds. No console.log noise.
 
 ### Auto-Indexing (File Watcher + Branch Detection)
 
