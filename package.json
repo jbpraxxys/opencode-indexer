@@ -28,25 +28,25 @@
     "dev": "tsc --watch"
   },
   "overrides": {
-    "tree-sitter": "^0.25.0"
+    "web-tree-sitter": "$web-tree-sitter"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
+    "@lumis-sh/wasm-javascript": "^0.26.2",
+    "@lumis-sh/wasm-typescript": "^0.26.1",
+    "@lumis-sh/wasm-tsx": "^0.26.1",
+    "@lumis-sh/wasm-python": "^0.26.1",
+    "@lumis-sh/wasm-php": "^0.26.2",
     "@opencode-ai/plugin": "^1.14.0",
-    "@opentui/core": "^0.3.4",
-    "@opentui/solid": "^0.3.4",
+    "@opentui/core": "^0.4.1",
+    "@opentui/solid": "^0.4.1",
     "apache-arrow": "^18.1.0",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^12.11.1",
     "chokidar": "^5.0.0",
     "glob": "^11.0.0",
     "ignore": "^7.0.5",
     "ollama": "^0.5.0",
     "solid-js": "^1.9.12",
-    "tree-sitter": "^0.25.0",
-    "tree-sitter-javascript": "^0.25.0",
-    "tree-sitter-php": "^0.24.2",
-    "tree-sitter-python": "^0.25.0",
-    "tree-sitter-typescript": "^0.23.2",
     "uuid": "^11.0.0",
     "web-tree-sitter": "^0.26.9"
   },

@@ -133,14 +133,14 @@ const TS_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".p
 
 /** Per-extension WASM file path (relative to plugin's node_modules) */
 const TS_WASM: Record<string, string> = {
-  ".ts":  "tree-sitter-typescript/tree-sitter-typescript.wasm",
-  ".tsx": "tree-sitter-typescript/tree-sitter-tsx.wasm",
-  ".js":  "tree-sitter-javascript/tree-sitter-javascript.wasm",
-  ".jsx": "tree-sitter-javascript/tree-sitter-javascript.wasm",
-  ".mjs": "tree-sitter-javascript/tree-sitter-javascript.wasm",
-  ".cjs": "tree-sitter-javascript/tree-sitter-javascript.wasm",
-  ".py":  "tree-sitter-python/tree-sitter-python.wasm",
-  ".php": "tree-sitter-php/tree-sitter-php.wasm",
+  ".ts":  "@lumis-sh/wasm-typescript/tree-sitter-typescript.wasm",
+  ".tsx": "@lumis-sh/wasm-tsx/tree-sitter-tsx.wasm",
+  ".js":  "@lumis-sh/wasm-javascript/tree-sitter-javascript.wasm",
+  ".jsx": "@lumis-sh/wasm-javascript/tree-sitter-javascript.wasm",
+  ".mjs": "@lumis-sh/wasm-javascript/tree-sitter-javascript.wasm",
+  ".cjs": "@lumis-sh/wasm-javascript/tree-sitter-javascript.wasm",
+  ".py":  "@lumis-sh/wasm-python/tree-sitter-python.wasm",
+  ".php": "@lumis-sh/wasm-php/tree-sitter-php.wasm",
 }
 
 /**

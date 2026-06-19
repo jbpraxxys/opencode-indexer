@@ -23,7 +23,7 @@ npm run build
 
 ### 2. Configure — Server (tools)
 
-Add to `~/.config/opencode/opencode.json`:
+Add the plugin to `~/.config/opencode/opencode.json`:
 
 ```json
 "plugin": [
@@ -44,13 +44,13 @@ The TUI sidebar panel (live indexing progress bar, phase label, file/block count
 Add to `~/.config/opencode/tui.json`:
 
 ```json
-"plugin": [
-    "~/opencode-indexer"
-]
+{
+    "$schema": "https://opencode.ai/tui.json",
+    "plugin": ["~/opencode-indexer"]
+}
 ```
 
 The TUI loader resolves the directory and picks up `./src/tui.tsx` via the `package.json` exports — no extra configuration needed.
-
 That's it — LanceDB is the default vector store (zero setup). No server, no Docker.
 
 ### 4. Opt in a project
@@ -172,7 +172,7 @@ flowchart TB
 | **Hash Caching**                 | SHA-256 per-file hashes — re-indexing only processes changed files                              |
 | **Branch-Aware Indexing**        | Polls `.git/HEAD` every 3s — auto re-indexes on branch switch (opt-in)                          |
 | **.gitignore + .opencodeignore** | Respects project-level ignore rules (layered: defaults → .gitignore → .opencodeignore)          |
-|| **Progress File**                | Live progress (phase, percentage, counts) written to `.codebase-index-store/progress.json` during indexing; persisted state written to `.opencode/state/opencode-indexer/state.json` after completion     |
+| **Progress File**                | Live progress (phase, percentage, counts) written to `.codebase-index-store/progress.json` during indexing; persisted state written to `.opencode/state/opencode-indexer/state.json` after completion     |
 | **Deleted File Detection**       | Automatically removes orphaned blocks when files are deleted                                    |
 | **Consolidated Storage**         | Single `.codebase-index-store/` folder — LanceDB, progress, and branch tracking in one place    |
 
@@ -359,6 +359,7 @@ Each project gets its own vector store collection/table (`idx_<sha256>`). All in
 │   └── opencode-indexer/
 │       └── SKILL.md     # Agent skill — enforces search priority rule
 ├── banner.png           # Project banner
+├── tui.json             # TUI sidebar plugin entry
 ├── package.json
 └── tsconfig.json
 ```
