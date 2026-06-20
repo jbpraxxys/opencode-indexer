@@ -105,9 +105,9 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
 
   const indicator = () => {
     const p = pct().percent
-    if (p === 100) return "██"
-    if (phaseLabel() !== "idle") return "▓▓"
-    return "░░"
+    if (p === 100) return "●"
+    if (phaseLabel() !== "idle") return "●"
+    return "○"
   }
 
   const formatTime = (iso: string): string => {
@@ -129,7 +129,7 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
   return (
     <box flexDirection="column">
       <box flexDirection="row">
-        <text attributes={TextAttributes.BOLD}>⚡ Codebase Index</text>
+        <text attributes={TextAttributes.BOLD}>Codebase Indexing</text>
         <text> </text>
         <text fg={indicatorColor()}>{indicator()}</text>
         <text> </text>
