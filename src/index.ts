@@ -248,12 +248,11 @@ function makeCodebaseSearch(pluginConfig: IndexerConfig) {
                 };
             }
 
-            // Write state for TUI sidebar
+            // Write state for TUI sidebar (don't update lastIndexed — no indexing happened)
             writeState(ctx.directory, {
                 status: 'ready',
                 blocks: stats.blocks,
                 dbPath: stats.dbPath,
-                lastIndexed: new Date().toISOString(),
                 phase: 'done',
                 progress: 100,
             });
@@ -320,7 +319,6 @@ function makeCodebaseStatus(pluginConfig: IndexerConfig) {
                         status: 'ready',
                         blocks: stats.blocks,
                         dbPath: stats.dbPath,
-                        lastIndexed: new Date().toISOString(),
                         phase: 'done',
                         progress: 100,
                     });
@@ -450,16 +448,13 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
     const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const DEBOUNCE_MS = 600;
 
-    // Track whether the indexer has been initialized for watching
-    let watchInitialized = false;
     async function ensureWatchReady(directory: string): Promise<CodebaseIndexer | null> {
         if (!hasMarker(directory)) return null;
         try {
             const idx = getIndexer(directory, pluginConfig);
-            if (!watchInitialized) {
+            if (!idx.isReady()) {
                 await idx.ensureReady();
                 await idx.init();
-                watchInitialized = true;
             }
             return idx;
         } catch {
@@ -470,6 +465,15 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
     // Start file watcher if the project is opted in
     const projectDir = input.directory;
     if (projectDir && hasMarker(projectDir)) {
+        // Eagerly initialize the indexer so the watcher is ready immediately
+        (async () => {
+            try {
+                const idx = getIndexer(projectDir, pluginConfig);
+                await idx.ensureReady();
+                await idx.init();
+            } catch { /* will retry on first file change via ensureWatchReady */ }
+        })();
+
         const projectIgnore = loadProjectIgnore(projectDir);
         watcher = chokidar.watch(projectDir, {
             ignored: (path: string, stats?: any) => {

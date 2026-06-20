@@ -1154,6 +1154,10 @@ export class CodebaseIndexer {
       .filter((r) => r.score >= this.minScore && r.content.length > 0)
   }
 
+  isReady(): boolean {
+    return this.store !== null
+  }
+
   async stats(): Promise<{ blocks: number; dbPath: string }> {
     return {
       blocks: this.store ? await this.store.count() : 0,
