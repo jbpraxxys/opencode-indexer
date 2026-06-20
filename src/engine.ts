@@ -1115,13 +1115,19 @@ export class CodebaseIndexer {
 
     // Update progress file so TUI sidebar shows up-to-date timestamp
     const totalBlocks = await this.store.count()
+    const totalFiles = (() => {
+      try {
+        const raw = readFileSync(join(this.workspaceRoot, ".codebase-index-store/progress.json"), "utf-8")
+        return JSON.parse(raw).files ?? 0
+      } catch { return 0 }
+    })()
     writeProgressFile(this.workspaceRoot, {
       phase: "done",
       message: `Re-indexed ${relPath} → ${rows.length} blocks`,
       current: totalBlocks, total: totalBlocks,
       percentage: 100,
       updatedAt: "",
-      files: 0,
+      files: totalFiles,
       blocks: totalBlocks,
       dbPath: this.store?.getDbPath(),
       lastIndexed: new Date().toISOString(),

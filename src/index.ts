@@ -24,7 +24,7 @@
 
 import { tool } from '@opencode-ai/plugin/tool';
 import type { PluginOptions, PluginInput } from '@opencode-ai/plugin';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
 import { join, relative, extname, dirname } from 'path';
 import {
     CodebaseIndexer,
@@ -465,16 +465,23 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
     // Start file watcher if the project is opted in
     const projectDir = input.directory;
     if (projectDir && hasMarker(projectDir)) {
-        // Eagerly initialize the indexer so the watcher is ready immediately
-        (async () => {
-            try {
-                const idx = getIndexer(projectDir, pluginConfig);
-                await idx.ensureReady();
-                await idx.init();
-            } catch { /* will retry on first file change via ensureWatchReady */ }
-        })();
+        // Initialize the indexer so the watcher is ready immediately
+        try {
+            const idx = getIndexer(projectDir, pluginConfig);
+            await idx.ensureReady();
+            await idx.init();
+        } catch { /* will retry on first file change */ }
+
+        const DEBUG_LOG = join(projectDir, ".codebase-index-store", "watcher-debug.log")
+        function debug(msg: string) {
+            try { appendFileSync(DEBUG_LOG, `${new Date().toISOString()} ${msg}\n`) } catch {}
+        }
+
+        debug(`START projectDir=${projectDir}`)
+        debug(`READY isReady=${getIndexer(projectDir, pluginConfig).isReady()}`)
 
         const projectIgnore = loadProjectIgnore(projectDir);
+
         watcher = chokidar.watch(projectDir, {
             ignored: (path: string, stats?: any) => {
                 const ext = extname(path);
@@ -495,6 +502,9 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
             // Only care about add/change/unlink for files
             if (event === 'addDir' || event === 'unlinkDir') return;
 
+            const relPath = relative(projectDir, filePath);
+            debug(`EVENT ${event} ${relPath}`)
+
             // Debounce
             const existing = debounceTimers.get(filePath);
             if (existing) clearTimeout(existing);
@@ -503,25 +513,31 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
                 filePath,
                 setTimeout(async () => {
                     debounceTimers.delete(filePath);
-                    const relPath = relative(projectDir, filePath);
 
                     if (event === 'unlink') {
                         const idx = getIndexer(projectDir, pluginConfig);
                         try {
                             await idx.deleteFile(filePath);
+                            debug(`UNLINK OK ${relPath}`)
                         } catch {
-                            /* indexer not ready */
+                            debug(`UNLINK FAIL ${relPath}`)
                         }
                         return;
                     }
 
                     // add / change — re-index the file
                     const idx = await ensureWatchReady(projectDir);
-                    if (!idx) return;
+                    if (!idx) {
+                        debug(`ENSURE_WATCH_READY NULL ${relPath}`)
+                        return;
+                    }
 
                     try {
-                        await idx.indexFile(filePath);
-                    } catch (err: any) {}
+                        const result = await idx.indexFile(filePath);
+                        debug(`INDEXFILE OK ${relPath} → ${result.blocks} blocks`)
+                    } catch (err: any) {
+                        debug(`INDEXFILE FAIL ${relPath} ${err.message || err}`)
+                    }
                 }, DEBOUNCE_MS)
             );
         });
