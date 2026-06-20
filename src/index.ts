@@ -770,6 +770,11 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         }, 1000);
     }
 
+    // Auto-start indexing on server init (non-blocking)
+    if (projectDir && isOptedIn(projectDir, pluginConfig)) {
+        startIndexing(projectDir).catch(() => {});
+    }
+
     function debug(msg: string) {
         const dbgPath = join(projectDir, '.codebase-index-store', 'watcher-debug.log');
         try { appendFileSync(dbgPath, `${new Date().toISOString()} ${msg}\n`); } catch {}
