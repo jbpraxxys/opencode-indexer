@@ -472,9 +472,14 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
     if (projectDir && hasMarker(projectDir)) {
         const projectIgnore = loadProjectIgnore(projectDir);
         watcher = chokidar.watch(projectDir, {
-            ignored: (path: string) => {
-                if (!WATCH_EXTENSIONS.has(extname(path))) return true;
+            ignored: (path: string, stats?: any) => {
+                const ext = extname(path);
                 const rel = relative(projectDir, path);
+                if (!rel) return false;
+                // Directories: only check ignore rules (never filter by extension)
+                if (!ext) return projectIgnore.ignores(rel);
+                // Files: check extension then ignore rules
+                if (!WATCH_EXTENSIONS.has(ext)) return true;
                 return projectIgnore.ignores(rel);
             },
             persistent: true,

@@ -101,11 +101,18 @@ const DEFAULT_MAX_FILE_SIZE = 1_000_000
 const INDEXER_VERSION = 2
 
 const IGNORE = [
-  "**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**",
-  "**/.next/**", "**/vendor/**", "**/__pycache__/**", "**/.venv/**",
-  "**/target/**", "**/*.min.js", "**/*.min.css", "**/*.map",
+  "**/node_modules/**", "node_modules",
+  "**/.git/**", ".git",
+  "**/dist/**", "dist",
+  "**/build/**", "build",
+  "**/.next/**", ".next",
+  "**/vendor/**", "vendor",
+  "**/__pycache__/**", "__pycache__",
+  "**/.venv/**", ".venv",
+  "**/target/**", "target",
+  "**/*.min.js", "**/*.min.css", "**/*.map",
   "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml",
-  "**/.codebase-index-store/**",
+  "**/.codebase-index-store/**", ".codebase-index-store",
 ]
 
 const EXTENSIONS = new Set([
