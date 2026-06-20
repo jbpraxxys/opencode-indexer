@@ -16,6 +16,9 @@
     "ai-tools"
   ],
   "main": "dist/index.js",
+  "bin": {
+    "opencode-indexer": "dist/cli.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",

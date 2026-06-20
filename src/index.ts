@@ -24,7 +24,7 @@
 
 import { tool } from '@opencode-ai/plugin/tool';
 import type { PluginOptions, PluginInput } from '@opencode-ai/plugin';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, unlinkSync } from 'fs';
 import { join, relative, extname, dirname } from 'path';
 import {
     CodebaseIndexer,
@@ -47,6 +47,10 @@ function hasMarker(directory: string): boolean {
     return existsSync(join(directory, MARKER_FILE));
 }
 
+function isOptedIn(directory: string, config: IndexerConfig): boolean {
+    return config.autoIndex === true || hasMarker(directory);
+}
+
 // Module-level cache: workspacePath → CodebaseIndexer instance
 const indexers = new Map<string, CodebaseIndexer>();
 
@@ -66,7 +70,7 @@ async function ensureIndexed(
     indexer: CodebaseIndexer,
     config: IndexerConfig
 ): Promise<string | null> {
-    if (!hasMarker(directory)) return null;
+    if (!isOptedIn(directory, config)) return null;
 
     const autoKey = `${directory}`;
     try {
@@ -110,8 +114,8 @@ function makeCodebaseIndex(pluginConfig: IndexerConfig) {
             force: z.boolean().describe('Force re-index even if index exists'),
         },
         async execute(args, ctx) {
-            // Require opt-in marker
-            if (!hasMarker(ctx.directory)) {
+            // Require opt-in marker or autoIndex
+            if (!isOptedIn(ctx.directory, pluginConfig)) {
                 return {
                     output:
                         '❌ This project is not opted into codebase indexing.\n\n' +
@@ -188,8 +192,8 @@ function makeCodebaseSearch(pluginConfig: IndexerConfig) {
             maxResults: z.number().optional().describe('Max results (default 20)'),
         },
         async execute(args, ctx) {
-            // Require opt-in marker
-            if (!hasMarker(ctx.directory)) {
+            // Require opt-in marker or autoIndex
+            if (!isOptedIn(ctx.directory, pluginConfig)) {
                 return {
                     output:
                         '❌ This project is not opted into codebase indexing.\n\n' +
@@ -280,10 +284,10 @@ function makeCodebaseStatus(pluginConfig: IndexerConfig) {
             'Also shows whether this project is opted into indexing (via .codebase-index marker).',
         args: {},
         async execute(_args, ctx) {
-            const marker = hasMarker(ctx.directory);
+            const marker = isOptedIn(ctx.directory, pluginConfig);
             const markerStatus = marker
-                ? '✅ Opted in (.codebase-index found)'
-                : '❌ Not opted in (no .codebase-index)';
+                ? '✅ Opted in (autoIndex or .codebase-index found)'
+                : '❌ Not opted in (no .codebase-index, autoIndex disabled)';
 
             // Auto-index if marker exists and no index
             if (marker) {
@@ -338,6 +342,40 @@ function makeCodebaseStatus(pluginConfig: IndexerConfig) {
 
             return {
                 output: `${markerStatus}\n\nTo opt in:\n  touch ${join(ctx.directory, '.codebase-index')}`,
+            };
+        },
+    });
+}
+
+// ── Control tool: start / pause / stop / reindex ──────────
+
+function makeCodebaseControl(pluginConfig: IndexerConfig) {
+    return tool({
+        description:
+            'Manually control the codebase indexer: start, pause, stop, or force re-index. ' +
+            'Useful when you want to explicitly manage indexing without waiting for auto-index.',
+        args: {
+            action: z.enum(['start', 'pause', 'stop', 'reindex']).describe(
+                'start: begin indexing. pause: stop live watcher. stop: abort current indexing. reindex: full re-scan.'
+            ),
+        },
+        async execute(args, ctx) {
+            if (!isOptedIn(ctx.directory, pluginConfig)) {
+                return {
+                    output:
+                        '❌ Not opted in. Create .codebase-index or enable autoIndex.',
+                };
+            }
+            const action = args.action as string;
+            writeCommand(ctx.directory, action as any);
+            const labels: Record<string, string> = {
+                start: '▶ Indexing started',
+                pause: '⏸ Watcher paused (existing index preserved)',
+                stop: '⏹ Abort signal sent',
+                reindex: '⟲ Full re-index started',
+            };
+            return {
+                output: `${labels[action] || action} — check codebase_status for progress.`,
             };
         },
     });
@@ -440,6 +478,38 @@ function writeState(directory: string, partial: Partial<IndexerState>): void {
     writeFileSync(path, JSON.stringify(state, null, 2), 'utf-8');
 }
 
+// ─── Command file for TUI/CLI control ────────────────────
+
+interface IndexerCommand {
+    action: 'start' | 'pause' | 'stop' | 'reindex';
+    timestamp: string;
+}
+
+export function commandFilePath(directory: string): string {
+    return join(directory, '.opencode', 'state', 'opencode-indexer', 'command.json');
+}
+
+export function writeCommand(directory: string, action: IndexerCommand['action']): void {
+    const path = commandFilePath(directory);
+    const dir = dirname(path);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(path, JSON.stringify({ action, timestamp: new Date().toISOString() }, null, 2), 'utf-8');
+}
+
+/** Read and consume (delete) the command file. Returns null if no command. */
+export function readAndConsumeCommand(directory: string): IndexerCommand | null {
+    const path = commandFilePath(directory);
+    try {
+        if (!existsSync(path)) return null;
+        const cmd = JSON.parse(readFileSync(path, 'utf-8')) as IndexerCommand;
+        // Delete after reading (one-shot semantics)
+        try { unlinkSync(path); } catch { /* best-effort */ }
+        return cmd;
+    } catch {
+        return null;
+    }
+}
+
 // ─── Plugin Server ────────────────────────────────────────
 
 export const server = async (input: PluginInput, options: PluginOptions) => {
@@ -448,8 +518,13 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
     const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const DEBOUNCE_MS = 600;
 
+    // ─── Manual control state ───────────────────────────
+    let isIndexing = false;
+    let isPaused = false;
+    let watcherActive = false;
+
     async function ensureWatchReady(directory: string): Promise<CodebaseIndexer | null> {
-        if (!hasMarker(directory)) return null;
+        if (!isOptedIn(directory, pluginConfig)) return null;
         try {
             const idx = getIndexer(directory, pluginConfig);
             if (!idx.isReady()) {
@@ -462,9 +537,107 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         }
     }
 
+    /** Start indexing (play button) */
+    async function startIndexing(directory: string): Promise<void> {
+        if (isIndexing) return;
+        if (!isOptedIn(directory, pluginConfig)) return;
+        isIndexing = true;
+        isPaused = false;
+        writeState(directory, { status: 'indexing', phase: 'scanning', progress: 0 });
+        try {
+            const idx = getIndexer(directory, pluginConfig);
+            await idx.ensureReady();
+            await idx.init();
+            const { files, blocks } = await idx.index(directory);
+            const stats = await idx.stats();
+            writeState(directory, {
+                status: 'ready', files, blocks: stats.blocks,
+                dbPath: stats.dbPath, lastIndexed: new Date().toISOString(),
+                phase: 'done', progress: 100,
+            });
+        } catch (err: any) {
+            writeState(directory, { status: 'error', phase: 'error', progress: 0 });
+        } finally {
+            isIndexing = false;
+        }
+    }
+
+    /** Pause watcher — stop live updates but keep existing index */
+    async function pauseIndexing(directory: string): Promise<void> {
+        isPaused = true;
+        if (watcher) {
+            await watcher.close();
+            watcher = null;
+            watcherActive = false;
+        }
+        writeState(directory, { status: 'idle', phase: 'paused', progress: 0 });
+    }
+
+    /** Stop current indexing immediately + stop watcher */
+    async function stopIndexing(directory: string): Promise<void> {
+        const idx = getIndexer(directory, pluginConfig);
+        idx.abort();
+        isIndexing = false;
+        isPaused = false;
+        if (watcher) {
+            await watcher.close();
+            watcher = null;
+            watcherActive = false;
+        }
+        writeState(directory, { status: 'idle', phase: 'idle', progress: 0 });
+    }
+
+    /** Force full re-index (rewind button) */
+    async function reindex(directory: string): Promise<void> {
+        // Abort current indexing first
+        const idx = getIndexer(directory, pluginConfig);
+        idx.abort();
+        isIndexing = false;
+        await new Promise(r => setTimeout(r, 100));
+
+        // Start fresh full re-index with force=true
+        isIndexing = true;
+        isPaused = false;
+        writeState(directory, { status: 'indexing', phase: 'scanning', progress: 0 });
+        try {
+            await idx.ensureReady();
+            await idx.init();
+            const { files, blocks } = await idx.index(directory, undefined, true);
+            const stats = await idx.stats();
+            writeState(directory, {
+                status: 'ready', files, blocks: stats.blocks,
+                dbPath: stats.dbPath, lastIndexed: new Date().toISOString(),
+                phase: 'done', progress: 100,
+            });
+        } catch (err: any) {
+            writeState(directory, { status: 'error', phase: 'error', progress: 0 });
+        } finally {
+            isIndexing = false;
+        }
+    }
+
+    /** Dispatch a command from the TUI/CLI command file */
+    async function handleCommand(cmd: IndexerCommand, directory: string): Promise<void> {
+        if (!directory) return;
+        switch (cmd.action) {
+            case 'start':
+                await startIndexing(directory);
+                break;
+            case 'pause':
+                await pauseIndexing(directory);
+                break;
+            case 'stop':
+                await stopIndexing(directory);
+                break;
+            case 'reindex':
+                await reindex(directory);
+                break;
+        }
+    }
+
     // Start file watcher if the project is opted in
     const projectDir = input.directory;
-    if (projectDir && hasMarker(projectDir)) {
+    if (projectDir && isOptedIn(projectDir, pluginConfig)) {
         // Initialize the indexer so the watcher is ready immediately
         try {
             const idx = getIndexer(projectDir, pluginConfig);
@@ -501,6 +674,8 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         watcher.on('all', (event: string, filePath: string) => {
             // Only care about add/change/unlink for files
             if (event === 'addDir' || event === 'unlinkDir') return;
+            // Skip if paused
+            if (isPaused) return;
 
             const relPath = relative(projectDir, filePath);
             debug(`EVENT ${event} ${relPath}`)
@@ -542,12 +717,35 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
             );
         });
 
+        watcherActive = true;
+
         // Watcher started silently (no console.log — output goes to TUI textarea)
+    }
+
+    // ─── Command poller — checks for TUI/CLI commands every 1s ──
+    let commandInterval: ReturnType<typeof setInterval> | null = null;
+    if (projectDir && isOptedIn(projectDir, pluginConfig)) {
+        commandInterval = setInterval(async () => {
+            try {
+                const cmd = readAndConsumeCommand(projectDir);
+                if (cmd) {
+                    debug(`COMMAND ${cmd.action} at ${cmd.timestamp}`);
+                    await handleCommand(cmd, projectDir);
+                }
+            } catch (err: any) {
+                // Silent — don't crash the poller
+            }
+        }, 1000);
+    }
+
+    function debug(msg: string) {
+        const dbgPath = join(projectDir, '.codebase-index-store', 'watcher-debug.log');
+        try { appendFileSync(dbgPath, `${new Date().toISOString()} ${msg}\n`); } catch {}
     }
 
     // ─── Branch polling (opt-in via branchAware config) ──────
     let branchInterval: ReturnType<typeof setInterval> | null = null;
-    if (projectDir && hasMarker(projectDir) && pluginConfig.branchAware) {
+    if (projectDir && isOptedIn(projectDir, pluginConfig) && pluginConfig.branchAware) {
         let lastBranch = getCurrentBranch(projectDir);
         const pollMs = pluginConfig.branchPollMs ?? 3000;
 
@@ -578,6 +776,7 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
             codebase_index: makeCodebaseIndex(pluginConfig),
             codebase_search: makeCodebaseSearch(pluginConfig),
             codebase_status: makeCodebaseStatus(pluginConfig),
+            codebase_control: makeCodebaseControl(pluginConfig),
         },
         'experimental.chat.system.transform': async (_input: any, output: any) => {
             const backend = pluginConfig.vectorStore ?? 'lancedb';
@@ -588,7 +787,9 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
                     '  Uses tree-sitter AST parsing (TS, JS, Python, PHP) for semantic blocks. Hash caching skips unchanged files.\n' +
                     '  Requires `.codebase-index` marker file in the project root (auto-index on first use).\n' +
                     '- **codebase_search** — Natural language search across indexed code.\n' +
-                    '- **codebase_status** — Check if indexing is set up.\n\n' +
+                    '- **codebase_status** — Check if indexing is set up.\n' +
+                    '- **codebase_control** — Manually start/pause/stop/reindex (action param). ' +
+                    'Can also be controlled via TUI buttons or external CLI (`npx opencode-indexer <action>`).\n\n' +
                     '### Search Priority Rule ⚠️\n' +
                     '**This is the most important rule. Violating it wastes context and misses results.**\n\n' +
                     "**Precondition:** Before any code search, if you're unsure whether the project is opted in, " +

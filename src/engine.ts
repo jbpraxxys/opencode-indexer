@@ -60,6 +60,8 @@ export interface IndexerConfig {
   branchAware?: boolean
   /** Polling interval in ms for branch change detection (default 3000) */
   branchPollMs?: number
+  /** When true, index any project automatically — no .codebase-index marker needed */
+  autoIndex?: boolean
 }
 
 export interface SearchResult {
@@ -840,6 +842,7 @@ export class CodebaseIndexer {
   private qdrantApiKey?: string
   branchAware: boolean
   branchPollMs: number
+  private aborted = false
 
   constructor(workspaceRoot: string, config: IndexerConfig = {}) {
     this.workspaceRoot = workspaceRoot
@@ -879,6 +882,16 @@ export class CodebaseIndexer {
     await this.embedder.dimension()
   }
 
+  /** Signal the current index() operation to abort at the next batch boundary */
+  abort(): void {
+    this.aborted = true
+  }
+
+  /** Check if abort was requested */
+  isAborted(): boolean {
+    return this.aborted
+  }
+
   async init(): Promise<void> {
     if (this.storeType === "qdrant") {
       this.store = createQdrantStore(this.qdrantUrl, this.colName, this.qdrantApiKey)
@@ -890,8 +903,11 @@ export class CodebaseIndexer {
     await this.store.init(dimension)
   }
 
-  async index(workspaceRoot: string, onProgress?: (msg: string) => void): Promise<{ files: number; blocks: number; skipped: number }> {
+  async index(workspaceRoot: string, onProgress?: (msg: string) => void, force?: boolean): Promise<{ files: number; blocks: number; skipped: number }> {
     if (!this.store) throw new Error("Call init() first")
+
+    // Reset abort flag at the start of a new index operation
+    this.aborted = false
 
     const log = onProgress || (() => {})
     const progress = (state: ProgressState) => {
@@ -932,6 +948,14 @@ export class CodebaseIndexer {
     const totalFiles = indexable.length
 
     for (let fi = 0; fi < totalFiles; fi++) {
+      // Check for abort signal
+      if (this.aborted) {
+        const abortMsg = `⏹ Indexing aborted at file ${fi}/${totalFiles}`
+        log(abortMsg)
+        progress({ phase: "idle", message: abortMsg, current: fi, total: totalFiles, percentage: Math.round((fi / totalFiles) * 100), updatedAt: "", files: fi, blocks: allBlocks.length, dbPath: this.store?.getDbPath() })
+        return { files: fi, blocks: await this.store.count(), skipped: skippedCount }
+      }
+
       const file = indexable[fi]
       const relPath = relative(workspaceRoot, file)
 
@@ -944,8 +968,8 @@ export class CodebaseIndexer {
         }
       } catch { /* unreadable — skip */ }
 
-      // Hash cache check: skip if file hasn't changed
-      if (fileHash) {
+      // Hash cache check: skip if file hasn't changed (unless force re-index)
+      if (fileHash && !force) {
         const storedHash = await this.store.getFileHash(file)
         if (storedHash && storedHash === fileHash) {
           skippedCount++
@@ -1026,6 +1050,14 @@ export class CodebaseIndexer {
     const allRows: any[] = []
 
     for (let i = 0; i < allBlocks.length; i += this.batchSize) {
+      // Check for abort signal
+      if (this.aborted) {
+        const abortMsg = `⏹ Embedding aborted at batch ${Math.floor(i / this.batchSize) + 1}/${totalBatches} (${allRows.length}/${allBlocks.length} blocks embedded, not saved)`
+        log(abortMsg)
+        progress({ phase: "idle", message: abortMsg, current: allRows.length, total: allBlocks.length, percentage: Math.round((allRows.length / allBlocks.length) * 100), updatedAt: "", files: indexable.length, blocks: allRows.length, dbPath: this.store?.getDbPath() })
+        return { files: indexable.length, blocks: await this.store.count(), skipped: skippedCount }
+      }
+
       const batchNum = Math.floor(i / this.batchSize) + 1
       const batch = allBlocks.slice(i, i + this.batchSize)
       const texts = batch.map((b) => `${b.relativePath}\n${b.content}`)

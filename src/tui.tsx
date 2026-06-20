@@ -1,9 +1,9 @@
 /** @jsxImportSource @opentui/solid */
-import { createSignal, Show, onCleanup } from "solid-js"
+import { createSignal, Show, onCleanup, For } from "solid-js"
 import { TextAttributes } from "@opentui/core"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { join, dirname } from "node:path"
 
 const BAR_WIDTH = 24
 
@@ -26,6 +26,10 @@ function stateFilePath(projectDir: string): string {
   return join(projectDir, ".opencode", "state", "opencode-indexer", "state.json")
 }
 
+function commandFilePath(projectDir: string): string {
+  return join(projectDir, ".opencode", "state", "opencode-indexer", "command.json")
+}
+
 function readState(projectDir: string): ProgressState | null {
   const progressP = progressFilePath(projectDir)
   try {
@@ -38,6 +42,14 @@ function readState(projectDir: string): ProgressState | null {
   return null
 }
 
+/** Write a command file that the server poller will pick up within 1s */
+function sendCommand(projectDir: string, action: string): void {
+  const path = commandFilePath(projectDir)
+  const dir = dirname(path)
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  writeFileSync(path, JSON.stringify({ action, timestamp: new Date().toISOString() }, null, 2), "utf-8")
+}
+
 function buildBar(percent: number): { bar: string; clamped: number } {
   const clamped = Math.max(0, Math.min(100, percent))
   const filled = Math.max(0, Math.min(BAR_WIDTH, Math.round((clamped / 100) * BAR_WIDTH)))
@@ -47,9 +59,24 @@ function buildBar(percent: number): { bar: string; clamped: number } {
   }
 }
 
+interface ControlButton {
+  icon: string
+  label: string
+  action: string
+  color: string
+}
+
+const BUTTONS: ControlButton[] = [
+  { icon: "▶", label: "Start",  action: "start",   color: "green" },
+  { icon: "⏸", label: "Pause",  action: "pause",   color: "yellow" },
+  { icon: "⏹", label: "Stop",   action: "stop",    color: "red" },
+  { icon: "⟲", label: "Reindex", action: "reindex", color: "cyan" },
+]
+
 function View(props: { api: TuiPluginApi; sessionID: string }) {
   const [data, setData] = createSignal<ProgressState | null>(null)
   const [breath, setBreath] = createSignal(false)
+  const [lastAction, setLastAction] = createSignal<string | null>(null)
 
   const projectDir = props.api.state.path.directory?.trim() || process.cwd()
 
@@ -68,9 +95,19 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
     }
   }, 500)
 
+  // Clear "last action" feedback after 3s
+  let actionTimeout: ReturnType<typeof setTimeout> | null = null
+  const triggerAction = (action: string) => {
+    sendCommand(projectDir, action)
+    setLastAction(action)
+    if (actionTimeout) clearTimeout(actionTimeout)
+    actionTimeout = setTimeout(() => setLastAction(null), 3000)
+  }
+
   onCleanup(() => {
     clearInterval(pollInterval)
     clearInterval(breathInterval)
+    if (actionTimeout) clearTimeout(actionTimeout)
   })
 
   const theme = () => props.api.theme.current
@@ -126,8 +163,14 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
   const blockCount = () => data()?.blocks ?? 0
   const lastIndexed = () => data()?.lastIndexed || ""
 
+  const isBusy = () => {
+    const label = phaseLabel()
+    return label !== "idle" && label !== "done" && pct().percent < 100
+  }
+
   return (
     <box flexDirection="column">
+      {/* Header */}
       <box flexDirection="row">
         <text fg={indicatorColor()}>{indicator()}</text>
         <text> </text>
@@ -135,10 +178,37 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
         <text> </text>
         <text fg={barColor()}>{phaseLabel()}</text>
       </box>
+
+      {/* Progress bar */}
       <text fg={barColor()}>{`${pct().bar} ${pct().percent}%`}</text>
+
+      {/* Stats */}
       <text fg={theme().textMuted}>{`${fileCount()} files · ${blockCount()} blocks`}</text>
       <Show when={lastIndexed()}>
         <text>{`Last: ${formatTime(lastIndexed())}`}</text>
+      </Show>
+
+      {/* Control buttons — clickable + keyboard navigable */}
+      <box flexDirection="row" marginTop={1}>
+        <For each={BUTTONS}>
+          {(btn) => (
+            <box
+              focusable
+              focusedBorderColor={btn.color}
+              onMouseDown={() => triggerAction(btn.action)}
+              marginRight={1}
+              border
+              borderColor={theme().border}
+            >
+              <text fg={btn.color}>{`${btn.icon} ${btn.label}`}</text>
+            </box>
+          )}
+        </For>
+      </box>
+
+      {/* Action feedback toast */}
+      <Show when={lastAction()}>
+        <text fg={theme().accent}>  ↳ Sent: {lastAction()}</text>
       </Show>
     </box>
   )
