@@ -129,12 +129,11 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
   return (
     <box flexDirection="column">
       <box flexDirection="row">
-        <text attributes={TextAttributes.BOLD}>Codebase Indexing</text>
+        <text attributes={TextAttributes.BOLD}>⚡ Codebase Index</text>
         <text> </text>
         <text fg={indicatorColor()}>{indicator()}</text>
-        <text> </text>
-        <text>{`${pct().percent}%`}</text>
       </box>
+      <text fg={barColor()}>{`${pct().bar} ${pct().percent}%`}</text>
       <text fg={barColor()}>{phaseLabel()}</text>
       <text fg={theme().textMuted}>{`${fileCount()} files · ${blockCount()} blocks`}</text>
       <Show when={lastIndexed()}>
