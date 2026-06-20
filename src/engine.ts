@@ -110,6 +110,7 @@ const IGNORE = [
   "**/__pycache__/**", "__pycache__",
   "**/.venv/**", ".venv",
   "**/target/**", "target",
+  "**/.opencode/**", ".opencode",
   "**/*.min.js", "**/*.min.css", "**/*.map",
   "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml",
   "**/.codebase-index-store/**", ".codebase-index-store",
