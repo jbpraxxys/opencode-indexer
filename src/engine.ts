@@ -1111,6 +1111,21 @@ export class CodebaseIndexer {
 
     await this.store.deleteByFile(filePath)
     await this.store.upsertPoints(rows)
+
+    // Update progress file so TUI sidebar shows up-to-date timestamp
+    const totalBlocks = await this.store.count()
+    writeProgressFile(this.workspaceRoot, {
+      phase: "done",
+      message: `Re-indexed ${relPath} → ${rows.length} blocks`,
+      current: totalBlocks, total: totalBlocks,
+      percentage: 100,
+      updatedAt: "",
+      files: 0,
+      blocks: totalBlocks,
+      dbPath: this.store?.getDbPath(),
+      lastIndexed: new Date().toISOString(),
+    })
+
     return { blocks: rows.length }
   }
 
