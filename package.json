@@ -1,6 +1,6 @@
 {
   "name": "opencode-indexer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Semantic code search plugin for OpenCode — tree-sitter AST indexing with LanceDB vector store",
   "type": "module",
   "repository": {
