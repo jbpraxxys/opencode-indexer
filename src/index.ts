@@ -512,6 +512,17 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
 
                     try {
                         const result = await idx.indexFile(filePath);
+                        if (result.blocks > 0) {
+                            const stats = await idx.stats();
+                            writeState(projectDir, {
+                                status: 'ready',
+                                blocks: stats.blocks,
+                                dbPath: stats.dbPath,
+                                lastIndexed: new Date().toISOString(),
+                                phase: 'done',
+                                progress: 100,
+                            });
+                        }
                     } catch (err: any) {}
                 }, DEBOUNCE_MS)
             );
