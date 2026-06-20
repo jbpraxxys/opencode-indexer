@@ -3,21 +3,25 @@
  * Codebase Indexer CLI
  *
  * Usage:
- *   node cli.mjs index   /path/to/project              # Index a project
- *   node cli.mjs search  /path/to/project  "query"      # Search an indexed project
- *   node cli.mjs status  /path/to/project               # Check index status
- *   node cli.mjs clear   /path/to/project               # Delete index for a project
+ *   node cli.mjs index    /path/to/project               # Index a project
+ *   node cli.mjs search   /path/to/project  "query"      # Search an indexed project
+ *   node cli.mjs status   /path/to/project               # Check index status
+ *   node cli.mjs clear    /path/to/project               # Delete index for a project
+ *   node cli.mjs start    /path/to/project               # Start indexing (via command file)
+ *   node cli.mjs stop     /path/to/project               # Stop indexing (via command file)
+ *   node cli.mjs pause    /path/to/project               # Pause watcher (via command file)
+ *   node cli.mjs reindex  /path/to/project               # Force full re-index (via command file)
  *
  * Config reads from ~/.config/opencode/opencode.json (plugin options)
  * or from environment variables:
  *   OPENCODE_INDEXER_API_KEY, OPENCODE_INDEXER_BASE_URL, etc.
  *
- * Default: Ollama + LanceDB (zero setup)
+ * Default: OpenAI + LanceDB
  */
 
-import { readFileSync, existsSync } from "fs"
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs"
 import { homedir } from "os"
-import { resolve } from "path"
+import { resolve, join, dirname } from "path"
 import { CodebaseIndexer } from "./dist/engine.js"
 
 // ─── Load config ────────────────────────────────────────
@@ -41,10 +45,10 @@ function loadConfig() {
 
   // Fallback to env vars
   return {
-    embedder: process.env.OPENCODE_INDEXER_EMBEDDER || "ollama",
+    embedder: process.env.OPENCODE_INDEXER_EMBEDDER || "openai",
     openaiApiKey: process.env.OPENCODE_INDEXER_API_KEY,
-    openaiBaseUrl: process.env.OPENCODE_INDEXER_BASE_URL || "https://prod-ai-proxy-openai-embeddings.praxxys.dev/code",
-    model: process.env.OPENCODE_INDEXER_MODEL || "nomic-embed-text",
+    openaiBaseUrl: process.env.OPENCODE_INDEXER_BASE_URL || "https://api.openai.com/v1",
+    model: process.env.OPENCODE_INDEXER_MODEL || "text-embedding-3-small",
     vectorStore: process.env.OPENCODE_INDEXER_VECTOR_STORE || "lancedb",
   }
 }
@@ -60,27 +64,35 @@ async function main() {
 Codebase Indexer CLI
 
 Usage:
-  node ${process.argv[1]} index   <directory>   Index a project
-  node ${process.argv[1]} search  <directory> <query>   Search indexed code
-  node ${process.argv[1]} status  <directory>           Check index status
-  node ${process.argv[1]} clear   <directory>           Delete index
+  node ${process.argv[1]} index    <directory>             Index a project
+  node ${process.argv[1]} search   <directory> <query>    Search indexed code
+  node ${process.argv[1]} status   <directory>             Check index status
+  node ${process.argv[1]} clear    <directory>             Delete index
+  node ${process.argv[1]} start    <directory>             Start indexing (requires running server)
+  node ${process.argv[1]} stop     <directory>             Stop indexing (requires running server)
+  node ${process.argv[1]} pause    <directory>             Pause watcher (requires running server)
+  node ${process.argv[1]} reindex  <directory>             Force full re-index (requires running server)
 
 Examples:
-  node ${process.argv[1]} index   ~/Sites/aristocrat-admin
-  node ${process.argv[1]} search  ~/Sites/aristocrat-admin "how does auth work"
-  node ${process.argv[1]} status  ~/Sites/aristocrat-admin
+  node ${process.argv[1]} index    ~/Sites/aristocrat-admin
+  node ${process.argv[1]} search   ~/Sites/aristocrat-admin "how does auth work"
+  node ${process.argv[1]} status   ~/Sites/aristocrat-admin
+  node ${process.argv[1]} reindex  ~/Sites/aristocrat-admin
 `)
     process.exit(0)
   }
 
+  // Control commands (start/stop/pause/reindex) just write a command file — no API key needed
+  const isControlCommand = ["start", "stop", "pause", "reindex"].includes(command)
+
   const pluginConfig = loadConfig()
 
-  if (!pluginConfig.openaiApiKey) {
+  if (!isControlCommand && !pluginConfig.openaiApiKey) {
     console.error("❌ No API key found. Set OPENCODE_INDEXER_API_KEY env var or configure in ~/.config/opencode/opencode.json")
     process.exit(1)
   }
 
-  const indexer = new CodebaseIndexer(target, pluginConfig)
+  const indexer = isControlCommand ? null : new CodebaseIndexer(target, pluginConfig)
 
   switch (command) {
     case "index": {
@@ -216,8 +228,39 @@ Examples:
       break
     }
 
+    case "start":
+    case "stop":
+    case "pause":
+    case "reindex": {
+      // These write a command file that the running server polls every 1s.
+      // The server must be running in this project for the command to take effect.
+      const cmdPath = join(target, ".opencode", "state", "opencode-indexer", "command.json")
+      const cmdDir = dirname(cmdPath)
+      if (!existsSync(cmdDir)) mkdirSync(cmdDir, { recursive: true })
+
+      const icons = { start: "▶", stop: "⏹", pause: "⏸", reindex: "⏮" }
+      const labels = {
+        start: "Indexing started",
+        stop: "Abort signal sent",
+        pause: "Watcher paused (index preserved)",
+        reindex: "Full re-index started",
+      }
+
+      writeFileSync(
+        cmdPath,
+        JSON.stringify({ action: command, timestamp: new Date().toISOString() }, null, 2),
+        "utf-8"
+      )
+
+      console.log(`\n  ${icons[command]} ${labels[command]}`)
+      console.log(`  Target: ${target}`)
+      console.log(`  Command file: ${cmdPath}`)
+      console.log(`  ⏳ Server will pick this up within 1s (if running).\n`)
+      break
+    }
+
     default:
-      console.error(`\n  ❌ Unknown command: ${command}. Use: index, search, status, clear\n`)
+      console.error(`\n  ❌ Unknown command: ${command}. Use: index, search, status, clear, start, stop, pause, reindex\n`)
       process.exit(1)
   }
 }

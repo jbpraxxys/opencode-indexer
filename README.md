@@ -489,7 +489,7 @@ Each project gets its own vector store collection/table (`idx_<sha256>`). All in
 
 **Too many blocks (noise):** The glob ignore fix ensures `node_modules`, `vendor`, etc. are excluded. If you have a stale index, run `codebase_index(force=true)`.
 
-**Re-index a project:** `codebase_index(force=true)` in OpenCode, or click ⟲ in the TUI, or `npx opencode-indexer reindex .` from CLI.
+**Re-index a project:** `codebase_index(force=true)` in OpenCode, or click ⏮ in the TUI, or `npx opencode-indexer reindex .` from CLI.
 
 **Switch between LanceDB and Qdrant:** Change `vectorStore` in your config and re-index with `force=true`. Old data in the previous store is not automatically deleted — remove it manually (`.codebase-index-store/` folder or Qdrant collection).
 

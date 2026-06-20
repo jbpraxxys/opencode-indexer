@@ -75,12 +75,8 @@ async function ensureIndexed(
 
     const autoKey = `${directory}`;
     try {
-        const embedderOk = config.embedder === 'openai' || config.embedder === 'ollama' || true; // default is ollama
-
-        if (embedderOk) {
-            await indexer.ensureReady();
-            await indexer.init();
-        }
+        await indexer.ensureReady();
+        await indexer.init();
 
         // Check if index already exists
         const stats = await indexer.stats();
