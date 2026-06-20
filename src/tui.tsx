@@ -129,9 +129,9 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
   return (
     <box flexDirection="column">
       <box flexDirection="row">
-        <text attributes={TextAttributes.BOLD}>⚡ Codebase Index</text>
-        <text> </text>
         <text fg={indicatorColor()}>{indicator()}</text>
+        <text> </text>
+        <text attributes={TextAttributes.BOLD}>⚡ Codebase Index</text>
       </box>
       <text fg={barColor()}>{`${pct().bar} ${pct().percent}%`}</text>
       <text fg={barColor()}>{phaseLabel()}</text>
