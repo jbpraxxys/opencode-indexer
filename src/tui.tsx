@@ -131,7 +131,7 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
       <box flexDirection="row">
         <text fg={indicatorColor()}>{indicator()}</text>
         <text> </text>
-        <text attributes={TextAttributes.BOLD}>⚡ Codebase Index</text>
+        <text attributes={TextAttributes.BOLD}>⚡ Codebase Indexing</text>
       </box>
       <text fg={barColor()}>{`${pct().bar} ${pct().percent}%`}</text>
       <text fg={barColor()}>{phaseLabel()}</text>
