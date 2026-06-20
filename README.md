@@ -225,15 +225,13 @@ The agent follows a **Search Priority Rule**: checks `codebase_status` first (in
 
 When indexing, a live sidebar panel appears showing real-time progress:
 
-```
-⚡ Codebase Index
-██████░░░░░░░░░░░░░░ 45%
-embedding
-299 files · 200 blocks
-```
+<p align="center">
+  <img src="screenshot.webp" alt="OpenCode Indexer TUI Sidebar" width="400">
+</p>
 
+- **Status indicator** — `●` colored circle: gray for idle, orange (breathing) during indexing, green at 100%
 - **Progress bar** — `█` filled, `░` unfilled, with percentage
-- **Phase label** — color-coded: muted for idle, accent for active, green for done
+- **Phase label** — inline in header, color-coded: muted for idle, accent for active, green for done
 - **Stats** — file and block counts in muted text
 - **Last indexed** — shown when available
 
