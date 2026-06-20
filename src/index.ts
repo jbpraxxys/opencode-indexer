@@ -29,6 +29,7 @@ import { join, relative, extname, dirname } from 'path';
 import {
     CodebaseIndexer,
     loadProjectIgnore,
+    writeProgressFile,
     type IndexerConfig,
     getCurrentBranch,
     getStoredBranch,
@@ -513,7 +514,14 @@ export function readAndConsumeCommand(directory: string): IndexerCommand | null 
 // ─── Plugin Server ────────────────────────────────────────
 
 export const server = async (input: PluginInput, options: PluginOptions) => {
-    const pluginConfig = (options ?? {}) as IndexerConfig;
+    const pluginConfig = {
+        embedder: process.env.OPENCODE_INDEXER_EMBEDDER || 'openai',
+        openaiApiKey: process.env.OPENCODE_INDEXER_API_KEY,
+        openaiBaseUrl: process.env.OPENCODE_INDEXER_BASE_URL || 'https://prod-ai-proxy-openai-embeddings.praxxys.dev/code',
+        model: process.env.OPENCODE_INDEXER_MODEL || 'text-embedding-3-small',
+        vectorStore: process.env.OPENCODE_INDEXER_VECTOR_STORE || 'lancedb',
+        ...(options ?? {}),
+    } as IndexerConfig;
     let watcher: import('chokidar').FSWatcher | null = null;
     const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const DEBOUNCE_MS = 600;
@@ -543,19 +551,25 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         if (!isOptedIn(directory, pluginConfig)) return;
         isIndexing = true;
         isPaused = false;
+        const progress = (state: any) => writeProgressFile(directory, state);
+        progress({ phase: 'scanning', message: 'Starting...', current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
         writeState(directory, { status: 'indexing', phase: 'scanning', progress: 0 });
         try {
             const idx = getIndexer(directory, pluginConfig);
             await idx.ensureReady();
             await idx.init();
             const { files, blocks } = await idx.index(directory);
+            if (idx.isAborted()) return;
             const stats = await idx.stats();
+            progress({ phase: 'done', message: `✅ ${files} files → ${blocks} blocks`, current: blocks, total: blocks, percentage: 100, updatedAt: '', files, blocks, dbPath: stats.dbPath, lastIndexed: new Date().toISOString() });
             writeState(directory, {
                 status: 'ready', files, blocks: stats.blocks,
                 dbPath: stats.dbPath, lastIndexed: new Date().toISOString(),
                 phase: 'done', progress: 100,
             });
         } catch (err: any) {
+            const msg = `⚠ Error: ${err.message}`;
+            progress({ phase: 'error', message: msg, current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
             writeState(directory, { status: 'error', phase: 'error', progress: 0 });
         } finally {
             isIndexing = false;
@@ -564,12 +578,20 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
 
     /** Pause watcher — stop live updates but keep existing index */
     async function pauseIndexing(directory: string): Promise<void> {
+        // Abort current indexing if running, so index() returns quickly
+        const idx = getIndexer(directory, pluginConfig);
+        idx.abort();
+        isIndexing = false;
         isPaused = true;
         if (watcher) {
             await watcher.close();
             watcher = null;
             watcherActive = false;
         }
+        writeProgressFile(directory, {
+            phase: 'paused', message: '⏸ Paused', current: 0, total: 0,
+            percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null,
+        } as any);
         writeState(directory, { status: 'idle', phase: 'paused', progress: 0 });
     }
 
@@ -584,6 +606,10 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
             watcher = null;
             watcherActive = false;
         }
+        writeProgressFile(directory, {
+            phase: 'idle', message: '⏹ Stopped', current: 0, total: 0,
+            percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null,
+        } as any);
         writeState(directory, { status: 'idle', phase: 'idle', progress: 0 });
     }
 
@@ -598,18 +624,24 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         // Start fresh full re-index with force=true
         isIndexing = true;
         isPaused = false;
+        const progress = (state: any) => writeProgressFile(directory, state);
+        progress({ phase: 'scanning', message: 'Re-indexing...', current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
         writeState(directory, { status: 'indexing', phase: 'scanning', progress: 0 });
         try {
             await idx.ensureReady();
             await idx.init();
             const { files, blocks } = await idx.index(directory, undefined, true);
+            if (idx.isAborted()) return;
             const stats = await idx.stats();
+            progress({ phase: 'done', message: `✅ ${files} files → ${blocks} blocks`, current: blocks, total: blocks, percentage: 100, updatedAt: '', files, blocks, dbPath: stats.dbPath, lastIndexed: new Date().toISOString() });
             writeState(directory, {
                 status: 'ready', files, blocks: stats.blocks,
                 dbPath: stats.dbPath, lastIndexed: new Date().toISOString(),
                 phase: 'done', progress: 100,
             });
         } catch (err: any) {
+            const msg = `⚠ Error: ${err.message}`;
+            progress({ phase: 'error', message: msg, current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
             writeState(directory, { status: 'error', phase: 'error', progress: 0 });
         } finally {
             isIndexing = false;

@@ -23,6 +23,19 @@
 | **File deletion** | Removes orphaned blocks when files are deleted |
 | **Branch polling** | Opt-in via `branchAware` config — polls `.git/HEAD` every N ms, re-indexes on branch switch |
 
+## Manual Control
+
+The TUI sidebar (▶ ⏸ ⏹ ⏮) and `codebase_control` tool communicate with the server through a command file at `.opencode/state/opencode-indexer/command.json`. The server polls this file every 1 second and dispatches the action.
+
+| Action | Effect |
+|--------|--------|
+| `start` | Begin full indexing from scratch |
+| `pause` | Stop file watcher + abort current indexing (preserves existing index) |
+| `stop` | Abort current indexing + stop watcher, return to idle |
+| `reindex` | Clear existing index, restart fresh with `force=true` |
+
+Indexing checks for abort signals at batch boundaries — mid-indexing stop is safe.
+
 ## Hash Caching
 
 On re-index, only changed files are processed. Unchanged files are free:

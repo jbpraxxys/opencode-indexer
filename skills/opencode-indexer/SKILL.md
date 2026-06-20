@@ -29,7 +29,7 @@ codebase_status()           ← first
   → Index ready? codebase_search("query")
 ```
 
-Auto-indexing fires on first tool call in an opted-in project. Hash caching makes re-indexing incremental — only changed files re-process. The file watcher keeps the index current on save.
+Auto-indexing fires on first tool call in an opted-in project. A project is opted in if it has a `.codebase-index` marker file **or** the plugin is configured with `autoIndex: true`. Hash caching makes re-indexing incremental — only changed files re-process. The file watcher keeps the index current on save.
 
 ## Tools
 
@@ -38,6 +38,7 @@ Auto-indexing fires on first tool call in an opted-in project. Hash caching make
 | `codebase_search(query, maxResults?)` | Semantic search |
 | `codebase_status()` | Check opt-in, block count, backend |
 | `codebase_index(force?)` | Build/refresh index |
+| `codebase_control(action)` | Manually start/pause/stop/reindex |
 
 ## Query Tips
 
@@ -55,13 +56,14 @@ Rephrase strategies when first query fails:
 
 | Problem | Solution |
 |---------|----------|
-| "Not opted in" error | `touch .codebase-index` in project root |
+| "Not opted in" error | Create `.codebase-index` in project root or check `autoIndex` is enabled |
 | Stale or corrupt index | Delete `.codebase-index-store/`, run `codebase_index(force=true)` |
 | Embedding API error | Check API key and base URL |
 | Qdrant not available | `curl http://localhost:6333/healthz` |
 | Plugin tools not showing | Restart OpenCode, check `opencode plugin list` |
 | Qdrant "too many open files" (macOS) | `ulimit -n 65536` before launching Qdrant |
 | Switch vector stores | Change `vectorStore` in config, re-index with `force=true` |
+| Manual control not responding | TUI buttons (▶ ⏸ ⏹ ⏮) write commands; server polls every 1s |
 
 ## Reference
 

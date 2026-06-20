@@ -30,6 +30,14 @@ function commandFilePath(projectDir: string): string {
   return join(projectDir, ".opencode", "state", "opencode-indexer", "command.json")
 }
 
+/** Write a command file that the server poller will pick up within 1s */
+function sendCommand(projectDir: string, action: string): void {
+  const path = commandFilePath(projectDir)
+  const dir = dirname(path)
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  writeFileSync(path, JSON.stringify({ action, timestamp: new Date().toISOString() }, null, 2), "utf-8")
+}
+
 function readState(projectDir: string): ProgressState | null {
   const progressP = progressFilePath(projectDir)
   try {
@@ -40,14 +48,6 @@ function readState(projectDir: string): ProgressState | null {
     if (existsSync(stateP)) return JSON.parse(readFileSync(stateP, "utf-8"))
   } catch { /* ignore */ }
   return null
-}
-
-/** Write a command file that the server poller will pick up within 1s */
-function sendCommand(projectDir: string, action: string): void {
-  const path = commandFilePath(projectDir)
-  const dir = dirname(path)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(path, JSON.stringify({ action, timestamp: new Date().toISOString() }, null, 2), "utf-8")
 }
 
 function buildBar(percent: number): { bar: string; clamped: number } {
@@ -61,16 +61,15 @@ function buildBar(percent: number): { bar: string; clamped: number } {
 
 interface ControlButton {
   icon: string
-  label: string
   action: string
   color: string
 }
 
 const BUTTONS: ControlButton[] = [
-  { icon: "▶", label: "Start",  action: "start",   color: "green" },
-  { icon: "⏸", label: "Pause",  action: "pause",   color: "yellow" },
-  { icon: "⏹", label: "Stop",   action: "stop",    color: "red" },
-  { icon: "⟲", label: "Reindex", action: "reindex", color: "cyan" },
+  { icon: "▶", action: "start",   color: "green" },
+  { icon: "⏸", action: "pause",   color: "yellow" },
+  { icon: "⏹", action: "stop",    color: "red" },
+  { icon: "⏮", action: "reindex", color: "blue" },
 ]
 
 function View(props: { api: TuiPluginApi; sessionID: string }) {
@@ -95,7 +94,6 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
     }
   }, 500)
 
-  // Clear "last action" feedback after 3s
   let actionTimeout: ReturnType<typeof setTimeout> | null = null
   const triggerAction = (action: string) => {
     sendCommand(projectDir, action)
@@ -188,28 +186,23 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
         <text>{`Last: ${formatTime(lastIndexed())}`}</text>
       </Show>
 
-      {/* Control buttons — clickable + keyboard navigable */}
-      <box flexDirection="row" marginTop={1}>
+      {/* Control buttons — clickable, no border */}
+      <box flexDirection="row">
         <For each={BUTTONS}>
           {(btn) => (
             <box
               focusable
-              focusedBorderColor={btn.color}
               onMouseDown={() => triggerAction(btn.action)}
               marginRight={1}
-              border
-              borderColor={theme().border}
             >
-              <text fg={btn.color}>{`${btn.icon} ${btn.label}`}</text>
+              <text fg={btn.color}>{btn.icon}</text>
             </box>
           )}
         </For>
+        <Show when={lastAction()}>
+          <text fg={theme().accent}> {lastAction()}</text>
+        </Show>
       </box>
-
-      {/* Action feedback toast */}
-      <Show when={lastAction()}>
-        <text fg={theme().accent}>  ↳ Sent: {lastAction()}</text>
-      </Show>
     </box>
   )
 }
