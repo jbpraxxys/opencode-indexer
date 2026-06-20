@@ -5,7 +5,7 @@ import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plug
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
-const BAR_WIDTH = 20
+const BAR_WIDTH = 24
 
 /**
  * Engine writes live progress to .codebase-index-store/progress.json during indexing.
