@@ -62,14 +62,13 @@ function buildBar(percent: number): { bar: string; clamped: number } {
 interface ControlButton {
   icon: string
   action: string
-  color: string
 }
 
 const BUTTONS: ControlButton[] = [
-  { icon: "▶", action: "start",   color: "green" },
-  { icon: "⏸", action: "pause",   color: "yellow" },
-  { icon: "⏹", action: "stop",    color: "red" },
-  { icon: "⏮", action: "reindex", color: "blue" },
+  { icon: "▶", action: "start" },
+  { icon: "⏸", action: "pause" },
+  { icon: "⏹", action: "stop" },
+  { icon: "⏮", action: "reindex" },
 ]
 
 function View(props: { api: TuiPluginApi; sessionID: string }) {
@@ -195,7 +194,7 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
               onMouseDown={() => triggerAction(btn.action)}
               marginRight={1}
             >
-              <text fg={btn.color}>{btn.icon}</text>
+              <text fg={theme().textMuted}>{btn.icon}</text>
             </box>
           )}
         </For>
