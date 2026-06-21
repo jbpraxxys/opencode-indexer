@@ -529,7 +529,6 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
     // ─── Manual control state ───────────────────────────
     let isIndexing = false;
     let isPaused = false;
-    let watcherActive = false;
 
     async function ensureWatchReady(directory: string): Promise<CodebaseIndexer | null> {
         if (!isOptedIn(directory, pluginConfig)) return null;
@@ -545,49 +544,102 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         }
     }
 
-    /** Start indexing (play button) */
+    /** Re-create the chokidar watcher (used when resuming from pause) */
+    function startOrResumeWatcher(directory: string, projectIgnore: ReturnType<typeof loadProjectIgnore>): void {
+        if (watcher) {
+            watcher.close();
+            watcher = null;
+        }
+        watcher = chokidar.watch(directory, {
+            ignored: (path: string, stats?: any) => {
+                const ext = extname(path);
+                const rel = relative(directory, path);
+                if (!rel) return false;
+                if (!ext) return projectIgnore.ignores(rel);
+                if (!WATCH_EXTENSIONS.has(ext)) return true;
+                return projectIgnore.ignores(rel);
+            },
+            persistent: true,
+            ignoreInitial: true,
+            depth: 20,
+        });
+
+        watcher.on('all', (event: string, filePath: string) => {
+            if (event === 'addDir' || event === 'unlinkDir') return;
+            if (isPaused) return;
+
+            const relPath = relative(directory, filePath);
+            const existing = debounceTimers.get(filePath);
+            if (existing) clearTimeout(existing);
+
+            debounceTimers.set(
+                filePath,
+                setTimeout(async () => {
+                    debounceTimers.delete(filePath);
+
+                    if (event === 'unlink') {
+                        const idx = getIndexer(directory, pluginConfig);
+                        try { await idx.deleteFile(filePath); } catch {}
+                        return;
+                    }
+
+                    const idx = await ensureWatchReady(directory);
+                    if (!idx) return;
+
+                    try { await idx.indexFile(filePath); } catch {}
+                }, DEBOUNCE_MS)
+            );
+        });
+    }
+
+    /** Start: resume watcher then (if no index) build one */
     async function startIndexing(directory: string): Promise<void> {
-        if (isIndexing) return;
-        if (!isOptedIn(directory, pluginConfig)) return;
-        isIndexing = true;
+        if (!isOptedIn(directory, pluginConfig) || isIndexing) return;
+
+        const idx = getIndexer(directory, pluginConfig);
+        try {
+            await idx.ensureReady();
+            await idx.init();
+        } catch { return }
+
+        // Resume/start the watcher
         isPaused = false;
+        const projectIgnore = loadProjectIgnore(directory);
+        startOrResumeWatcher(directory, projectIgnore);
+
+        // Check if already indexed
+        const stats = await idx.stats();
+        if (stats.blocks > 0) return; // watcher is already running
+
+        // Build index
+        isIndexing = true;
         const progress = (state: any) => writeProgressFile(directory, state);
         progress({ phase: 'scanning', message: 'Starting...', current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
         writeState(directory, { status: 'indexing', phase: 'scanning', progress: 0 });
         try {
-            const idx = getIndexer(directory, pluginConfig);
-            await idx.ensureReady();
-            await idx.init();
             const { files, blocks } = await idx.index(directory);
             if (idx.isAborted()) return;
-            const stats = await idx.stats();
-            progress({ phase: 'done', message: `✅ ${files} files → ${blocks} blocks`, current: blocks, total: blocks, percentage: 100, updatedAt: '', files, blocks, dbPath: stats.dbPath, lastIndexed: new Date().toISOString() });
+            const s = await idx.stats();
+            progress({ phase: 'done', message: `✅ ${files} files → ${blocks} blocks`, current: blocks, total: blocks, percentage: 100, updatedAt: '', files, blocks, dbPath: s.dbPath, lastIndexed: new Date().toISOString() });
             writeState(directory, {
-                status: 'ready', files, blocks: stats.blocks,
-                dbPath: stats.dbPath, lastIndexed: new Date().toISOString(),
+                status: 'ready', files, blocks: s.blocks,
+                dbPath: s.dbPath, lastIndexed: new Date().toISOString(),
                 phase: 'done', progress: 100,
             });
         } catch (err: any) {
-            const msg = `⚠ Error: ${err.message}`;
-            progress({ phase: 'error', message: msg, current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
+            progress({ phase: 'error', message: `⚠ Error: ${err.message}`, current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
             writeState(directory, { status: 'error', phase: 'error', progress: 0 });
         } finally {
             isIndexing = false;
         }
     }
 
-    /** Pause watcher — stop live updates but keep existing index */
+    /** Pause: stop watcher, abort indexing, preserve existing index — ▶ resumes watcher */
     async function pauseIndexing(directory: string): Promise<void> {
-        // Abort current indexing if running, so index() returns quickly
-        const idx = getIndexer(directory, pluginConfig);
-        idx.abort();
+        getIndexer(directory, pluginConfig).abort();
         isIndexing = false;
         isPaused = true;
-        if (watcher) {
-            await watcher.close();
-            watcher = null;
-            watcherActive = false;
-        }
+        if (watcher) { await watcher.close(); watcher = null; }
         writeProgressFile(directory, {
             phase: 'paused', message: '⏸ Paused', current: 0, total: 0,
             percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null,
@@ -595,17 +647,12 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         writeState(directory, { status: 'idle', phase: 'paused', progress: 0 });
     }
 
-    /** Stop current indexing immediately + stop watcher */
+    /** Stop: abort indexing, stop watcher — ▶ starts fresh */
     async function stopIndexing(directory: string): Promise<void> {
-        const idx = getIndexer(directory, pluginConfig);
-        idx.abort();
+        getIndexer(directory, pluginConfig).abort();
         isIndexing = false;
         isPaused = false;
-        if (watcher) {
-            await watcher.close();
-            watcher = null;
-            watcherActive = false;
-        }
+        if (watcher) { await watcher.close(); watcher = null; }
         writeProgressFile(directory, {
             phase: 'idle', message: '⏹ Stopped', current: 0, total: 0,
             percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null,
@@ -613,35 +660,32 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         writeState(directory, { status: 'idle', phase: 'idle', progress: 0 });
     }
 
-    /** Force full re-index (rewind button) */
+    /** Reindex: force full rebuild — always re-processes everything */
     async function reindex(directory: string): Promise<void> {
-        // Abort current indexing first
-        const idx = getIndexer(directory, pluginConfig);
-        idx.abort();
+        getIndexer(directory, pluginConfig).abort();
         isIndexing = false;
         await new Promise(r => setTimeout(r, 100));
 
-        // Start fresh full re-index with force=true
         isIndexing = true;
         isPaused = false;
         const progress = (state: any) => writeProgressFile(directory, state);
         progress({ phase: 'scanning', message: 'Re-indexing...', current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
         writeState(directory, { status: 'indexing', phase: 'scanning', progress: 0 });
         try {
+            const idx = getIndexer(directory, pluginConfig);
             await idx.ensureReady();
             await idx.init();
             const { files, blocks } = await idx.index(directory, undefined, true);
             if (idx.isAborted()) return;
-            const stats = await idx.stats();
-            progress({ phase: 'done', message: `✅ ${files} files → ${blocks} blocks`, current: blocks, total: blocks, percentage: 100, updatedAt: '', files, blocks, dbPath: stats.dbPath, lastIndexed: new Date().toISOString() });
+            const s = await idx.stats();
+            progress({ phase: 'done', message: `✅ ${files} files → ${blocks} blocks`, current: blocks, total: blocks, percentage: 100, updatedAt: '', files, blocks, dbPath: s.dbPath, lastIndexed: new Date().toISOString() });
             writeState(directory, {
-                status: 'ready', files, blocks: stats.blocks,
-                dbPath: stats.dbPath, lastIndexed: new Date().toISOString(),
+                status: 'ready', files, blocks: s.blocks,
+                dbPath: s.dbPath, lastIndexed: new Date().toISOString(),
                 phase: 'done', progress: 100,
             });
         } catch (err: any) {
-            const msg = `⚠ Error: ${err.message}`;
-            progress({ phase: 'error', message: msg, current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
+            progress({ phase: 'error', message: `⚠ Error: ${err.message}`, current: 0, total: 0, percentage: 0, updatedAt: '', files: 0, blocks: 0, dbPath: '', lastIndexed: null });
             writeState(directory, { status: 'error', phase: 'error', progress: 0 });
         } finally {
             isIndexing = false;
@@ -670,88 +714,15 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
     // Start file watcher if the project is opted in
     const projectDir = input.directory;
     if (projectDir && isOptedIn(projectDir, pluginConfig)) {
-        // Initialize the indexer so the watcher is ready immediately
+        // Initialize indexer
         try {
             const idx = getIndexer(projectDir, pluginConfig);
             await idx.ensureReady();
             await idx.init();
         } catch { /* will retry on first file change */ }
 
-        const DEBUG_LOG = join(projectDir, ".codebase-index-store", "watcher-debug.log")
-        function debug(msg: string) {
-            try { appendFileSync(DEBUG_LOG, `${new Date().toISOString()} ${msg}\n`) } catch {}
-        }
-
-        debug(`START projectDir=${projectDir}`)
-        debug(`READY isReady=${getIndexer(projectDir, pluginConfig).isReady()}`)
-
         const projectIgnore = loadProjectIgnore(projectDir);
-
-        watcher = chokidar.watch(projectDir, {
-            ignored: (path: string, stats?: any) => {
-                const ext = extname(path);
-                const rel = relative(projectDir, path);
-                if (!rel) return false;
-                // Directories: only check ignore rules (never filter by extension)
-                if (!ext) return projectIgnore.ignores(rel);
-                // Files: check extension then ignore rules
-                if (!WATCH_EXTENSIONS.has(ext)) return true;
-                return projectIgnore.ignores(rel);
-            },
-            persistent: true,
-            ignoreInitial: true,
-            depth: 20,
-        });
-
-        watcher.on('all', (event: string, filePath: string) => {
-            // Only care about add/change/unlink for files
-            if (event === 'addDir' || event === 'unlinkDir') return;
-            // Skip if paused
-            if (isPaused) return;
-
-            const relPath = relative(projectDir, filePath);
-            debug(`EVENT ${event} ${relPath}`)
-
-            // Debounce
-            const existing = debounceTimers.get(filePath);
-            if (existing) clearTimeout(existing);
-
-            debounceTimers.set(
-                filePath,
-                setTimeout(async () => {
-                    debounceTimers.delete(filePath);
-
-                    if (event === 'unlink') {
-                        const idx = getIndexer(projectDir, pluginConfig);
-                        try {
-                            await idx.deleteFile(filePath);
-                            debug(`UNLINK OK ${relPath}`)
-                        } catch {
-                            debug(`UNLINK FAIL ${relPath}`)
-                        }
-                        return;
-                    }
-
-                    // add / change — re-index the file
-                    const idx = await ensureWatchReady(projectDir);
-                    if (!idx) {
-                        debug(`ENSURE_WATCH_READY NULL ${relPath}`)
-                        return;
-                    }
-
-                    try {
-                        const result = await idx.indexFile(filePath);
-                        debug(`INDEXFILE OK ${relPath} → ${result.blocks} blocks`)
-                    } catch (err: any) {
-                        debug(`INDEXFILE FAIL ${relPath} ${err.message || err}`)
-                    }
-                }, DEBOUNCE_MS)
-            );
-        });
-
-        watcherActive = true;
-
-        // Watcher started silently (no console.log — output goes to TUI textarea)
+        startOrResumeWatcher(projectDir, projectIgnore);
     }
 
     // ─── Command poller — checks for TUI/CLI commands every 1s ──
@@ -761,23 +732,15 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
             try {
                 const cmd = readAndConsumeCommand(projectDir);
                 if (cmd) {
-                    debug(`COMMAND ${cmd.action} at ${cmd.timestamp}`);
                     await handleCommand(cmd, projectDir);
                 }
-            } catch (err: any) {
-                // Silent — don't crash the poller
-            }
+            } catch { /* silent */ }
         }, 1000);
     }
 
     // Auto-start indexing on server init (non-blocking)
     if (projectDir && isOptedIn(projectDir, pluginConfig)) {
         startIndexing(projectDir).catch(() => {});
-    }
-
-    function debug(msg: string) {
-        const dbgPath = join(projectDir, '.codebase-index-store', 'watcher-debug.log');
-        try { appendFileSync(dbgPath, `${new Date().toISOString()} ${msg}\n`); } catch {}
     }
 
     // ─── Branch polling (opt-in via branchAware config) ──────
