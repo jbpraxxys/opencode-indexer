@@ -707,18 +707,10 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
         }
     }
 
-    // Start file watcher if the project is opted in
+    // Start file watcher + optional index on server init
     const projectDir = input.directory;
     if (projectDir && isOptedIn(projectDir, pluginConfig)) {
-        // Initialize indexer
-        try {
-            const idx = getIndexer(projectDir, pluginConfig);
-            await idx.ensureReady();
-            await idx.init();
-        } catch { /* will retry on first file change */ }
-
-        const projectIgnore = loadProjectIgnore(projectDir);
-        startOrResumeWatcher(projectDir, projectIgnore);
+        startIndexing(projectDir).catch(() => {});
     }
 
     // ─── Command poller — checks for TUI/CLI commands every 1s ──
@@ -732,11 +724,6 @@ export const server = async (input: PluginInput, options: PluginOptions) => {
                 }
             } catch { /* silent */ }
         }, 1000);
-    }
-
-    // Auto-start indexing on server init (non-blocking)
-    if (projectDir && isOptedIn(projectDir, pluginConfig)) {
-        startIndexing(projectDir).catch(() => {});
     }
 
     // ─── Branch polling (opt-in via branchAware config) ──────

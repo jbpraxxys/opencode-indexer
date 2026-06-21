@@ -28,14 +28,14 @@ OpenCode auto-loads plugins from `~/.config/opencode/plugins/`. Create a shim fi
 **`~/.config/opencode/plugins/opencode-indexer.js`**
 
 ```js
-import { server as realServer } from "~/opencode-indexer/dist/index.js";
+import { server as realServer } from "/Users/you/opencode-indexer/dist/index.js";
 
 const config = {
-  embedder: "openai",
-  openaiBaseUrl: "https://your-proxy-endpoint/code",
-  openaiApiKey: "sk-...",
+  embedder: "openai",                          // "openai" or "ollama"
+  openaiBaseUrl: "https://api.openai.com/v1",   // OpenAI endpoint or your proxy
+  openaiApiKey: "sk-...",                       // your OpenAI API key
   model: "text-embedding-3-small",
-  vectorStore: "lancedb",
+  vectorStore: "lancedb",                       // "lancedb" (embedded) or "qdrant"
   branchAware: true,
   autoIndex: true,
 };
@@ -43,6 +43,8 @@ const config = {
 export const server = (input, options) =>
   realServer(input, { ...config, ...(options ?? {}) });
 ```
+
+> **Note:** The import path must be absolute — Node.js doesn't resolve `~`. Replace `/Users/you/opencode-indexer/` with your actual cloned path.
 
 The config can also be set via environment variables (see [Configuration](#configuration) below). The shim values take precedence.
 
@@ -59,9 +61,15 @@ Add to `~/.config/opencode/tui.json`:
 }
 ```
 
-The TUI loader resolves the directory and picks up `./src/tui.tsx` via the `package.json` exports — no extra configuration needed. LanceDB is the default vector store (zero setup). No server, no Docker.
+The TUI loader resolves the directory and picks up `./src/tui.tsx` via the `package.json` exports — no extra configuration needed.
 
-### 4. Opt in a project
+> **Note:** The path `~/opencode-indexer` in `tui.json` uses your home directory — OpenCode resolves `~` here. If you cloned to a different location, adjust the path accordingly.
+
+### 4. Verify the plugin loads
+
+Restart OpenCode and run `opencode plugin list`. You should see `opencode-indexer` listed along with its tools (`codebase_search`, `codebase_index`, `codebase_status`, `codebase_control`). If not, check that the import path in the shim file is correct.
+
+### 5. Opt in a project
 
 Create a `.codebase-index` marker file in the project root:
 
@@ -72,7 +80,7 @@ touch .codebase-index
 
 Or set `autoIndex: true` in the config (as shown in the shim above) — then every project is automatically indexed without a marker file.
 
-### 5. Restart OpenCode and start searching
+### 6. Restart OpenCode and start searching
 
 ```
 opencode ~/Sites/my-project
@@ -104,7 +112,7 @@ npx opencode-indexer reindex ~/Sites/my-project
 npx opencode-indexer pause   ~/Sites/my-project
 ```
 
-### 6. Install the agent skill (strongly recommended)
+### 7. Install the agent skill (strongly recommended)
 
 The skill tells the AI agent to **check `codebase_status` first** (free, no API call), then **always use `codebase_search`** before falling back to grep/glob/find. Without it, the agent may waste context on regex searches or make parallel search calls into non-opted-in projects:
 
@@ -171,7 +179,7 @@ Config is resolved in this priority order:
 |---|---|---|
 | `embedder` | `"openai"` | `"openai"` or `"ollama"` |
 | `model` | `"text-embedding-3-small"` | Embedding model |
-| `openaiBaseUrl` | `"https://api.openai.com/v1"` | OpenAI-compatible endpoint |
+| `openaiBaseUrl` | (configured in shim) | OpenAI-compatible endpoint |
 | `openaiApiKey` | — | API key (required for openai) |
 | `ollamaUrl` | `"http://localhost:11434"` | Ollama server |
 | `vectorStore` | `"lancedb"` | `"qdrant"` or `"lancedb"` |
@@ -196,7 +204,7 @@ The sidebar panel shows:
 - **Phase label** — inline in header, color-coded: muted for idle, accent for active, green for done
 - **Stats** — file and block counts in muted text
 - **Last indexed** — shown when available
-- **Control buttons** — ▶ ⏸ ⏹ ⏮ (start/pause/stop/reindex), clickable, with green/yellow/red/blue colors
+- **Control buttons** — ▶ ⏸ ⏹ ⏮ (start/pause/stop/reindex), clickable, in muted gray
 
 The sidebar polls for live progress (`.codebase-index-store/progress.json`, written by the engine during indexing) and falls back to the persisted state file (`.opencode/state/opencode-indexer/state.json`, written by the server after completion) every 2 seconds. No console.log noise.
 
@@ -293,7 +301,7 @@ flowchart TB
 
 ### Embedding Provider
 
-**OpenAI** (default) — set `openaiApiKey` and optionally `openaiBaseUrl`.
+**OpenAI** (default) — you need an [OpenAI API key](https://platform.openai.com/api-keys). Set `openaiApiKey` and `openaiBaseUrl` in the shim config. If using a proxy, set `openaiBaseUrl` to your proxy endpoint; otherwise use `https://api.openai.com/v1`.
 
 **Ollama** (local, free) — install [Ollama](https://ollama.com), then:
 
@@ -305,7 +313,7 @@ Then set `embedder: "ollama"`, `model: "nomic-embed-text"` in the shim config.
 
 ### Vector Store
 
-**LanceDB** (default) — embedded, file-based. Nothing to install.
+**LanceDB** (default) — embedded, file-based, zero setup. No server to install, no Docker, no ports. All data lives inside `.codebase-index-store/` in your project. LanceDB works out of the box — just set `vectorStore: "lancedb"` (or omit it, since it's the default).
 
 **Qdrant** (external) — for team deployments. Download and run:
 
