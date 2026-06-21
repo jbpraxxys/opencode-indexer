@@ -206,7 +206,7 @@ The sidebar panel shows:
 - **Last indexed** — shown when available
 - **Control buttons** — ▶ ⏸ ⏹ ⏮ (start/pause/stop/reindex), clickable, in muted gray
 
-![TUI Sidebar Screenshot](screenshot.webp)
+![TUI Sidebar Screenshot](screenshot-with-controls.webp)
 
 The sidebar polls for live progress (`.codebase-index-store/progress.json`, written by the engine during indexing) and falls back to the persisted state file (`.opencode/state/opencode-indexer/state.json`, written by the server after completion) every 2 seconds. No console.log noise.
 
